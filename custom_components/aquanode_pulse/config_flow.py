@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from ipaddress import ip_address, ip_network
 import logging
 from collections.abc import Mapping
 import time
@@ -42,6 +43,8 @@ _LOGGER = logging.getLogger(__name__)
 
 SERVICE_TYPE = "_aquanode-pulse._tcp.local."
 DISCOVERY_SECONDS = 6.0
+SWEEP_CONCURRENCY = 64
+SWEEP_TIMEOUT = 2.0
 MANUAL = "manual"
 
 
@@ -111,6 +114,68 @@ async def _async_scan(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
             await asyncio.sleep(0.5)
     finally:
         await browser.async_cancel()
+
+
+def _candidate_networks(hass: HomeAssistant) -> list[str]:
+    """Guess which /24 the boards live on, without asking.
+
+    mDNS is multicast and multicast does not cross a Docker bridge, so on a
+    containerised Home Assistant discovery cannot work no matter how the browse
+    is written. Unicast does cross it, which is how every other local
+    integration reaches its device, so their addresses are the one hint
+    available from inside the container about the real network.
+    """
+    networks: list[str] = []
+    for entry in hass.config_entries.async_entries():
+        host = str(entry.data.get(CONF_HOST) or "")
+        try:
+            address = ip_address(host)
+        except ValueError:
+            continue
+        if address.version != 4 or not address.is_private:
+            continue
+        network = str(ip_network(f"{host}/24", strict=False))
+        if network not in networks:
+            networks.append(network)
+    return networks
+
+
+async def _async_sweep(hass: HomeAssistant, network: str) -> dict[str, dict[str, Any]]:
+    """Ask every address on one /24 whether it is a Pulse.
+
+    `/api/v1/info` needs no password, so this identifies boards without the
+    label in hand. Two hundred and fifty four short requests in parallel take
+    about as long as one timeout.
+    """
+    session = async_get_clientsession(hass)
+    semaphore = asyncio.Semaphore(SWEEP_CONCURRENCY)
+
+    async def probe(host: str) -> tuple[str, dict[str, Any]] | None:
+        async with semaphore:
+            try:
+                async with asyncio.timeout(SWEEP_TIMEOUT):
+                    response = await session.get(
+                        f"http://{host}:{DEFAULT_PORT}/api/v1/info"
+                    )
+                    payload = await response.json(content_type=None)
+            except Exception:  # noqa: BLE001 - an address that is not a Pulse
+                return None
+        if not isinstance(payload, dict) or payload.get("api_version") != 1:
+            return None
+        serial = str(payload.get("serial") or "").upper()
+        if not serial.startswith("AP-"):
+            return None
+        return serial, {
+            CONF_HOST: host,
+            CONF_PORT: DEFAULT_PORT,
+            "name": payload.get("name")
+            or f"AquaNode Pulse {serial.removeprefix('AP-')}",
+        }
+
+    results = await asyncio.gather(
+        *(probe(str(host)) for host in ip_network(network).hosts()),
+    )
+    return {serial: device for found in results if found for serial, device in [found]}
 
 
 def _extract(info: Any) -> tuple[str, str, int] | None:
@@ -239,6 +304,16 @@ class AquaNodePulseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Offer the boards found on the network, or fall back to a manual IP."""
         if user_input is None:
             found = await _async_scan(self.hass)
+            if not found:
+                # Nothing answered the multicast question. On a containerised
+                # Home Assistant that is expected rather than exceptional, so
+                # fall back to asking every address on the networks the other
+                # integrations already talk to.
+                for network in _candidate_networks(self.hass):
+                    found = await _async_sweep(self.hass, network)
+                    _LOGGER.debug("swept %s, found %d", network, len(found))
+                    if found:
+                        break
             configured = {
                 entry.unique_id for entry in self._async_current_entries()
             }

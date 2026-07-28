@@ -129,7 +129,49 @@ def check_imports() -> str:
     except Exception as err:  # noqa: BLE001 - any failure is a failure
         fail(f"the network scan raises: {type(err).__name__}: {err}")
 
-    return "ok: imports, flow registration, mDNS parsing and a live scan"
+    # The unicast fallback is the only path that works on a containerised
+    # Home Assistant, so it gets a real board to find: an aiohttp app serving
+    # exactly what the firmware's handleInfo() returns.
+    from aiohttp import ClientSession, web
+
+    async def run_sweep() -> None:
+        app = web.Application()
+        app.router.add_get(
+            "/api/v1/info",
+            lambda request: web.json_response(
+                {"api_version": 1, "serial": "AP-429385", "name": "Casa"},
+            ),
+        )
+        app.router.add_get(
+            "/{tail:.*}", lambda request: web.json_response({"not": "a pulse"})
+        )
+        runner = web.AppRunner(app)
+        await runner.setup()
+        await web.TCPSite(runner, "127.0.0.1", 6053).start()
+
+        session = ClientSession()
+        real_session = config_flow.async_get_clientsession
+        config_flow.async_get_clientsession = lambda hass: session
+        try:
+            found = await config_flow._async_sweep(None, "127.0.0.0/24")
+        finally:
+            config_flow.async_get_clientsession = real_session
+            await session.close()
+            await runner.cleanup()
+
+        if found.get("AP-429385", {}).get(CONF_HOST) != "127.0.0.1":
+            fail(f"the unicast sweep does not find a board: {found}")
+
+    from homeassistant.const import CONF_HOST
+
+    try:
+        asyncio.run(run_sweep())
+    except OSError as err:
+        print(f"SKIP: sweep check needs port 6053 free ({err})")
+    except Exception as err:  # noqa: BLE001 - any failure is a failure
+        fail(f"the unicast sweep raises: {type(err).__name__}: {err}")
+
+    return "ok: imports, flow registration, mDNS parsing, scan and sweep"
 
 
 import_result = check_imports()
