@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Mapping
+import time
 from typing import Any
 
 import voluptuous as vol
@@ -36,8 +38,10 @@ from .api import (
 from .const import CONF_PASSWORD, CONF_PORT, DEFAULT_PORT, DOMAIN
 
 
+_LOGGER = logging.getLogger(__name__)
+
 SERVICE_TYPE = "_aquanode-pulse._tcp.local."
-DISCOVERY_SECONDS = 3.0
+DISCOVERY_SECONDS = 6.0
 MANUAL = "manual"
 
 
@@ -46,52 +50,60 @@ async def _async_scan(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
 
     Home Assistant announces devices it discovered on its own as a separate card
     on the integrations page. Picking the integration from the Add Integration
-    list always starts here instead, which is why this used to open a bare form
-    asking for an IP address that nobody knows by heart. So this step does its
-    own short browse and offers whatever answers.
+    list always starts the user step instead, which is why this used to open a
+    bare form asking for an IP address that nobody knows by heart.
+
+    The browser exists to put a question on the wire; the answers are read out
+    of Home Assistant's own zeroconf cache, which is the same place its built-in
+    discovery looks. Reading the cache rather than counting on a callback means
+    a board that answered before this flow opened is found immediately, and one
+    that answers while it is open is picked up on the next poll.
     """
+    from zeroconf import DNSPointer
     from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
+    from zeroconf.const import _CLASS_IN, _TYPE_PTR
 
     from homeassistant.components import zeroconf as ha_zeroconf
 
     aiozc = await ha_zeroconf.async_get_async_instance(hass)
-    names: list[str] = []
-
-    # python-zeroconf fires this with keyword arguments, so the first parameter
-    # has to be called `zeroconf` or the call raises and nothing is ever found.
-    def _found(
-        zeroconf: Any,
-        service_type: str,
-        name: str,
-        state_change: Any,
-    ) -> None:
-        if name not in names:
-            names.append(name)
-
-    browser = AsyncServiceBrowser(
-        aiozc.zeroconf,
-        [SERVICE_TYPE],
-        handlers=[_found],
-    )
+    zc = aiozc.zeroconf
+    browser = AsyncServiceBrowser(zc, [SERVICE_TYPE])
+    found: dict[str, dict[str, Any]] = {}
     try:
-        await asyncio.sleep(DISCOVERY_SECONDS)
+        deadline = time.monotonic() + DISCOVERY_SECONDS
+        while True:
+            for record in zc.cache.async_all_by_details(
+                SERVICE_TYPE, _TYPE_PTR, _CLASS_IN
+            ):
+                if not isinstance(record, DNSPointer):
+                    continue
+                info = AsyncServiceInfo(SERVICE_TYPE, record.alias)
+                if not info.load_from_cache(zc):
+                    await info.async_request(zc, 2000)
+                if (device := _extract(info)) is None:
+                    continue
+                serial, host, port = device
+                found[serial] = {
+                    CONF_HOST: host,
+                    CONF_PORT: port,
+                    "name": f"AquaNode Pulse {serial.removeprefix('AP-')}",
+                }
+            if found or time.monotonic() >= deadline:
+                # An empty cache here means Home Assistant never received the
+                # board's announcement at all, which is a network problem
+                # (usually a container without host networking, or a router
+                # that does not forward multicast) rather than a parsing one.
+                _LOGGER.info(
+                    "AquaNode Pulse scan: %d in the zeroconf cache, %d usable",
+                    len(zc.cache.async_all_by_details(
+                        SERVICE_TYPE, _TYPE_PTR, _CLASS_IN
+                    )),
+                    len(found),
+                )
+                return found
+            await asyncio.sleep(0.5)
     finally:
         await browser.async_cancel()
-
-    found: dict[str, dict[str, Any]] = {}
-    for name in names:
-        info = AsyncServiceInfo(SERVICE_TYPE, name)
-        if not await info.async_request(aiozc.zeroconf, 2000):
-            continue
-        if (device := _extract(info)) is None:
-            continue
-        serial, host, port = device
-        found[serial] = {
-            CONF_HOST: host,
-            CONF_PORT: port,
-            "name": f"AquaNode Pulse {serial.removeprefix('AP-')}",
-        }
-    return found
 
 
 def _extract(info: Any) -> tuple[str, str, int] | None:
