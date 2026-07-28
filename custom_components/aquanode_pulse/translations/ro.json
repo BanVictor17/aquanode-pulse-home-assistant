@@ -1,0 +1,131 @@
+{
+  "title": "AquaNode Pulse",
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "confirm": {
+        "title": "Adaugă {serial}",
+        "description": "AquaNode Pulse a fost găsit automat la {host}. Introdu parola de configurare tipărită pe eticheta produsului.",
+        "data": {
+          "password": "Parola de configurare"
+        }
+      },
+      "user": {
+        "title": "Adaugă manual AquaNode Pulse",
+        "description": "Folosește această opțiune doar dacă Home Assistant și Pulse sunt separate de un VLAN care blochează mDNS.",
+        "data": {
+          "host": "Adresă IP sau nume local",
+          "port": "Port API local",
+          "password": "Parola de configurare"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Actualizează autentificarea",
+        "description": "Introdu parola de configurare tipărită pe eticheta AquaNode Pulse.",
+        "data": {
+          "password": "Parola de configurare"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Dispozitivul nu răspunde în rețeaua locală.",
+      "invalid_auth": "Parola de configurare nu este corectă.",
+      "unknown": "A apărut o eroare neașteptată de comunicare."
+    },
+    "abort": {
+      "already_configured": "Acest AquaNode Pulse este deja configurat.",
+      "invalid_discovery": "Serviciul descoperit nu este un AquaNode Pulse valid.",
+      "reauth_successful": "Autentificarea a fost actualizată."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Calibrarea tensiunii",
+        "menu_options": {
+          "calibrate": "Calibrează tensiunea",
+          "reset_calibration": "Șterge calibrarea"
+        }
+      },
+      "calibrate": {
+        "title": "Calibrează tensiunea",
+        "description": "Măsoară priza în acest moment cu un multimetru true-RMS sigur și introdu valoarea. Nu mai modifica potențiometrul modulului după calibrare.",
+        "data": {
+          "reference_voltage": "Tensiunea măsurată"
+        }
+      },
+      "reset_calibration": {
+        "title": "Șterge calibrarea tensiunii",
+        "description": "Entitatea de tensiune nu va mai afișa o valoare până la următoarea calibrare."
+      }
+    },
+    "error": {
+      "cannot_connect": "Dispozitivul nu răspunde în rețeaua locală.",
+      "invalid_auth": "Parola de configurare nu este corectă.",
+      "invalid_reference_voltage": "Introdu o valoare între 50 și 280 V.",
+      "voltage_not_ready": "Modulul de tensiune lipsește, are semnal prea slab sau este saturat.",
+      "calibration_out_of_range": "Reglează potențiometrul modulului și încearcă din nou.",
+      "unknown": "A apărut o eroare neașteptată de comunicare."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "voltage": {
+        "name": "Tensiune"
+      },
+      "wifi_signal": {
+        "name": "Semnal Wi-Fi"
+      },
+      "uptime": {
+        "name": "Timp de funcționare"
+      },
+      "boot_count": {
+        "name": "Număr de porniri"
+      },
+      "raw_voltage": {
+        "name": "Semnal brut tensiune"
+      },
+      "voltage_signal_level": {
+        "name": "Nivel semnal tensiune"
+      },
+      "free_heap": {
+        "name": "Memorie liberă"
+      }
+    },
+    "binary_sensor": {
+      "cloud_connected": {
+        "name": "AquaNode Cloud"
+      },
+      "voltage_sensor_problem": {
+        "name": "Modul tensiune absent"
+      },
+      "voltage_clipped": {
+        "name": "Semnal tensiune saturat"
+      },
+      "calibration_required": {
+        "name": "Calibrare necesară"
+      },
+      "low_voltage": {
+        "name": "Tensiune scăzută"
+      }
+    },
+    "switch": {
+      "idle_led": {
+        "name": "LED de stare"
+      }
+    },
+    "button": {
+      "identify": {
+        "name": "Identifică"
+      },
+      "restart": {
+        "name": "Repornește"
+      }
+    },
+    "number": {
+      "voltage_minimum": {
+        "name": "Tensiune minimă"
+      }
+    }
+  }
+}

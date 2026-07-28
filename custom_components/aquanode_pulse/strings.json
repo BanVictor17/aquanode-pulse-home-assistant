@@ -1,0 +1,131 @@
+{
+  "title": "AquaNode Pulse",
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "confirm": {
+        "title": "Add {serial}",
+        "description": "AquaNode Pulse was found automatically at {host}. Enter the setup password printed on the product label.",
+        "data": {
+          "password": "Setup password"
+        }
+      },
+      "user": {
+        "title": "Add AquaNode Pulse manually",
+        "description": "Use this only when Home Assistant and Pulse are separated by a VLAN that blocks mDNS.",
+        "data": {
+          "host": "IP address or hostname",
+          "port": "Local API port",
+          "password": "Setup password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Update authentication",
+        "description": "Enter the setup password printed on the AquaNode Pulse label.",
+        "data": {
+          "password": "Setup password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "The device did not answer on the local network.",
+      "invalid_auth": "The setup password is incorrect.",
+      "unknown": "Unexpected communication error."
+    },
+    "abort": {
+      "already_configured": "This AquaNode Pulse is already configured.",
+      "invalid_discovery": "The discovered service is not a valid AquaNode Pulse.",
+      "reauth_successful": "Authentication was updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Voltage calibration",
+        "menu_options": {
+          "calibrate": "Calibrate voltage",
+          "reset_calibration": "Remove calibration"
+        }
+      },
+      "calibrate": {
+        "title": "Calibrate voltage",
+        "description": "Measure the outlet at this moment with a safe true-RMS multimeter and enter that value. Do not adjust the module potentiometer after calibration.",
+        "data": {
+          "reference_voltage": "Measured voltage"
+        }
+      },
+      "reset_calibration": {
+        "title": "Remove voltage calibration",
+        "description": "The voltage entity will stay unavailable until a new calibration is completed."
+      }
+    },
+    "error": {
+      "cannot_connect": "The device did not answer on the local network.",
+      "invalid_auth": "The setup password is incorrect.",
+      "invalid_reference_voltage": "Enter a value between 50 and 280 V.",
+      "voltage_not_ready": "The voltage module is missing, has too little signal, or is saturated.",
+      "calibration_out_of_range": "Adjust the module potentiometer and try again.",
+      "unknown": "Unexpected communication error."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "voltage": {
+        "name": "Voltage"
+      },
+      "wifi_signal": {
+        "name": "Wi-Fi signal"
+      },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "boot_count": {
+        "name": "Boot count"
+      },
+      "raw_voltage": {
+        "name": "Raw voltage signal"
+      },
+      "voltage_signal_level": {
+        "name": "Voltage signal level"
+      },
+      "free_heap": {
+        "name": "Free memory"
+      }
+    },
+    "binary_sensor": {
+      "cloud_connected": {
+        "name": "AquaNode Cloud"
+      },
+      "voltage_sensor_problem": {
+        "name": "Voltage module missing"
+      },
+      "voltage_clipped": {
+        "name": "Voltage signal saturated"
+      },
+      "calibration_required": {
+        "name": "Calibration required"
+      },
+      "low_voltage": {
+        "name": "Low voltage"
+      }
+    },
+    "switch": {
+      "idle_led": {
+        "name": "Status LED"
+      }
+    },
+    "button": {
+      "identify": {
+        "name": "Identify"
+      },
+      "restart": {
+        "name": "Restart"
+      }
+    },
+    "number": {
+      "voltage_minimum": {
+        "name": "Minimum voltage"
+      }
+    }
+  }
+}
