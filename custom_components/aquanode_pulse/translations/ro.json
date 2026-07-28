@@ -77,26 +77,40 @@
   },
   "entity": {
     "sensor": {
-      "voltage": {
-        "name": "Tensiune"
-      },
-      "wifi_signal": {
-        "name": "Semnal Wi-Fi"
-      },
-      "uptime": {
-        "name": "Timp de funcționare"
-      },
       "boot_count": {
         "name": "Număr de porniri"
+      },
+      "free_heap": {
+        "name": "Memorie liberă"
+      },
+      "last_interruption_cause": {
+        "name": "Ultima întrerupere",
+        "state": {
+          "power": "Pană de curent",
+          "network": "Problemă de rețea",
+          "unknown": "Cauză necunoscută"
+        }
+      },
+      "last_interruption_duration": {
+        "name": "Întreruperea a durat"
+      },
+      "last_interruption_ended": {
+        "name": "Întreruperea s-a încheiat"
       },
       "raw_voltage": {
         "name": "Semnal brut tensiune"
       },
+      "uptime": {
+        "name": "Timp de funcționare"
+      },
+      "voltage": {
+        "name": "Tensiune"
+      },
       "voltage_signal_level": {
         "name": "Nivel semnal tensiune"
       },
-      "free_heap": {
-        "name": "Memorie liberă"
+      "wifi_signal": {
+        "name": "Semnal Wi-Fi"
       }
     },
     "binary_sensor": {

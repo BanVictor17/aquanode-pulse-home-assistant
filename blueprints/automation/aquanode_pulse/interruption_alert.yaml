@@ -1,0 +1,99 @@
+blueprint:
+  name: AquaNode Pulse - interruption alert
+  description: >-
+    Sends a notification the moment contact with an AquaNode Pulse is lost, and
+    a second one when it returns saying whether it was a power cut or a network
+    problem.
+
+    The board cannot report during a power cut, because it has no power. The
+    first message is therefore honest about being a suspicion; only the second,
+    sent once the board is back, states the cause, and it states it from the
+    board's own boot counter rather than a guess.
+  domain: automation
+  input:
+    pulse_entity:
+      name: Pulse
+      description: The "Last interruption" sensor of the board to watch.
+      selector:
+        entity:
+          filter:
+            integration: aquanode_pulse
+            domain: sensor
+    notify_target:
+      name: Notification service
+      description: Where the messages go, for example notify.mobile_app_your_phone.
+      selector:
+        text:
+    quiet_seconds:
+      name: Ignore interruptions shorter than
+      description: >-
+        A router that blinks for a few seconds is not news. Interruptions
+        shorter than this send no message at all.
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 600
+          unit_of_measurement: seconds
+          mode: box
+
+mode: queued
+max: 10
+
+triggers:
+  - trigger: state
+    entity_id: !input pulse_entity
+    to: unavailable
+    for:
+      seconds: 20
+    id: lost
+  - trigger: event
+    event_type: aquanode_pulse_interruption
+    id: back
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: lost
+        sequence:
+          - action: !input notify_target
+            data:
+              title: Possible power cut
+              message: >-
+                {{ state_attr(trigger.entity_id, 'friendly_name') or 'AquaNode Pulse' }}
+                stopped answering. It is either the power or the network; you
+                will get a second message once it is back.
+      - conditions:
+          - condition: trigger
+            id: back
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.duration_seconds | int >= (quiet_seconds | int) }}
+        sequence:
+          - variables:
+              minutes: "{{ (trigger.event.data.duration_seconds | int / 60) | round(0) }}"
+          - action: !input notify_target
+            data:
+              title: >-
+                {% set cause = trigger.event.data.cause %}
+                {% if cause == 'power' %}Power is back
+                {% elif cause == 'network' %}Network is back
+                {% else %}Connection is back
+                {% endif %}
+              message: >-
+                {% set cause = trigger.event.data.cause %}
+                {% set name = trigger.event.data.name or 'AquaNode Pulse' %}
+                {% if cause == 'power' %}
+                  {{ name }} restarted, so the power really was off. It was gone
+                  for about {{ minutes }} min.
+                {% elif cause == 'network' %}
+                  {{ name }} stayed powered the whole time, so the power was
+                  never off. It was the network, for about {{ minutes }} min.
+                {% else %}
+                  {{ name }} is answering again after about {{ minutes }} min.
+                  There is not enough evidence to say whether it was the power
+                  or the network.
+                {% endif %}
+variables:
+  quiet_seconds: !input quiet_seconds

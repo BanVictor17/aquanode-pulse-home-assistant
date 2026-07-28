@@ -77,26 +77,40 @@
   },
   "entity": {
     "sensor": {
-      "voltage": {
-        "name": "Voltage"
-      },
-      "wifi_signal": {
-        "name": "Wi-Fi signal"
-      },
-      "uptime": {
-        "name": "Uptime"
-      },
       "boot_count": {
         "name": "Boot count"
+      },
+      "free_heap": {
+        "name": "Free memory"
+      },
+      "last_interruption_cause": {
+        "name": "Last interruption",
+        "state": {
+          "power": "Power cut",
+          "network": "Network problem",
+          "unknown": "Cause unknown"
+        }
+      },
+      "last_interruption_duration": {
+        "name": "Interruption lasted"
+      },
+      "last_interruption_ended": {
+        "name": "Interruption ended"
       },
       "raw_voltage": {
         "name": "Raw voltage signal"
       },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "voltage": {
+        "name": "Voltage"
+      },
       "voltage_signal_level": {
         "name": "Voltage signal level"
       },
-      "free_heap": {
-        "name": "Free memory"
+      "wifi_signal": {
+        "name": "Wi-Fi signal"
       }
     },
     "binary_sensor": {

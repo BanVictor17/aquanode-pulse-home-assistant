@@ -171,7 +171,45 @@ def check_imports() -> str:
     except Exception as err:  # noqa: BLE001 - any failure is a failure
         fail(f"the unicast sweep raises: {type(err).__name__}: {err}")
 
-    return "ok: imports, flow registration, mDNS parsing, scan and sweep"
+    # The classification is the whole point of the product, so it gets the
+    # scenarios rather than a smoke test.
+    from custom_components.aquanode_pulse.interruptions import (
+        NETWORK,
+        POWER,
+        UNKNOWN,
+        InterruptionTracker,
+        classify,
+    )
+
+    cases = [
+        # a restart moved the boot counter: the mains went away
+        ((7, 8, 12.0, 300.0), POWER),
+        # same counter, so the board was powered the whole time
+        ((7, 7, 4000.0, 300.0), NETWORK),
+        # no counter, but it has been up longer than it was missing
+        ((None, None, 4000.0, 300.0), NETWORK),
+        # no counter and no proof either way: say so
+        ((None, None, 10.0, 300.0), UNKNOWN),
+    ]
+    for args, expected in cases:
+        if (actual := classify(*args)) != expected:
+            fail(f"classify{args} said {actual}, expected {expected}")
+
+    tracker = InterruptionTracker()
+    tracker.poll_succeeded(0.0, {"boot_count": 7, "uptime_s": 900})
+    tracker.poll_failed(100.0)
+    tracker.poll_failed(160.0)  # still away; the start must not move
+    event = tracker.poll_succeeded(400.0, {"boot_count": 8, "uptime_s": 20})
+    if event is None or event.cause != POWER or event.duration_seconds != 300.0:
+        fail(f"the tracker misread a power cut: {event}")
+
+    quiet = InterruptionTracker()
+    quiet.poll_succeeded(0.0, {"boot_count": 7, "uptime_s": 900})
+    quiet.poll_failed(10.0)
+    if quiet.poll_succeeded(12.0, {"boot_count": 7, "uptime_s": 912}) is not None:
+        fail("a two second blip was reported as an interruption")
+
+    return "ok: imports, flow, mDNS, scan, sweep and interruption classification"
 
 
 import_result = check_imports()

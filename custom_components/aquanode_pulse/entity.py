@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -20,7 +22,23 @@ class AquaNodePulseEntity(CoordinatorEntity[AquaNodePulseCoordinator]):
         key: str,
     ) -> None:
         super().__init__(coordinator)
+        self._key = key
         self._attr_unique_id = f"{coordinator.data['serial']}_{key}"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Tag every entity so the sidebar panel can group them by board.
+
+        The panel is a plain web component with no access to the device
+        registry, so the grouping key travels on the state itself.
+        """
+        data = self.coordinator.data
+        return {
+            "aquanode_pulse": True,
+            "aquanode_serial": data["serial"],
+            "aquanode_name": data.get("name") or MODEL,
+            "aquanode_metric": self._key,
+        }
 
     @property
     def device_info(self) -> DeviceInfo:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -23,8 +24,11 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util.dt import utcnow
+
 from .coordinator import AquaNodePulseCoordinator
 from .entity import AquaNodePulseEntity
+from .interruptions import NETWORK, POWER, UNKNOWN
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -114,9 +118,75 @@ async def async_setup_entry(
     """Add Pulse sensors."""
     coordinator = entry.runtime_data.coordinator
     async_add_entities(
-        AquaNodePulseSensor(coordinator, description)
-        for description in SENSORS
+        [
+            *(
+                AquaNodePulseSensor(coordinator, description)
+                for description in SENSORS
+            ),
+            AquaNodePulseLastInterruptionCause(coordinator),
+            AquaNodePulseLastInterruptionEnded(coordinator),
+            AquaNodePulseLastInterruptionDuration(coordinator),
+        ]
     )
+
+
+class AquaNodePulseLastInterruptionCause(AquaNodePulseEntity, SensorEntity):
+    """What the most recent loss of contact turned out to be.
+
+    Every other entity here is a diagnostic reading. This one answers the
+    question the product exists for, in the two words the customer cares about:
+    was it the power, or was it the network.
+    """
+
+    _attr_translation_key = "last_interruption_cause"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [POWER, NETWORK, UNKNOWN]
+
+    def __init__(self, coordinator: AquaNodePulseCoordinator) -> None:
+        super().__init__(coordinator, "last_interruption_cause")
+
+    @property
+    def native_value(self) -> str | None:
+        last = self.coordinator.interruptions.last
+        return None if last is None else last.cause
+
+
+class AquaNodePulseLastInterruptionEnded(AquaNodePulseEntity, SensorEntity):
+    """When contact was restored."""
+
+    _attr_translation_key = "last_interruption_ended"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator: AquaNodePulseCoordinator) -> None:
+        super().__init__(coordinator, "last_interruption_ended")
+
+    @property
+    def native_value(self) -> datetime | None:
+        last = self.coordinator.interruptions.last
+        if last is None:
+            return None
+        # The tracker counts on the loop's monotonic clock, which is immune to
+        # the system time being corrected underneath it. Only the offset from
+        # now is meaningful, so it is converted at the moment it is read.
+        elapsed = self.hass.loop.time() - last.ended_at
+        return utcnow() - timedelta(seconds=elapsed)
+
+
+class AquaNodePulseLastInterruptionDuration(AquaNodePulseEntity, SensorEntity):
+    """How long the board was out of contact."""
+
+    _attr_translation_key = "last_interruption_duration"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, coordinator: AquaNodePulseCoordinator) -> None:
+        super().__init__(coordinator, "last_interruption_duration")
+
+    @property
+    def native_value(self) -> float | None:
+        last = self.coordinator.interruptions.last
+        return None if last is None else last.duration_seconds
 
 
 class AquaNodePulseSensor(AquaNodePulseEntity, SensorEntity):
@@ -138,12 +208,14 @@ class AquaNodePulseSensor(AquaNodePulseEntity, SensorEntity):
         return self.entity_description.value_fn(self.coordinator.data)
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Explain why a voltage value is not yet available."""
+        attributes = super().extra_state_attributes
         if self.entity_description.key != "voltage":
-            return None
+            return attributes
         voltage = self.coordinator.data["voltage"]
         return {
+            **attributes,
             "sensor_present": voltage["sensor_present"],
             "calibrated": voltage["calibrated"],
             "signal_clipped": voltage["clipped"],

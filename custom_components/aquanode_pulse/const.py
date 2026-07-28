@@ -7,8 +7,16 @@ from datetime import timedelta
 from homeassistant.const import Platform
 
 DOMAIN = "aquanode_pulse"
+EVENT_INTERRUPTION = "aquanode_pulse_interruption"
 MANUFACTURER = "AquaNode"
 MODEL = "AquaNode Pulse"
+
+PANEL_URL_PATH = "aquanode-pulse"
+PANEL_COMPONENT_NAME = "aquanode-pulse-panel"
+PANEL_TITLE = "AquaNode Pulse"
+PANEL_ICON = "mdi:power-plug"
+FRONTEND_URL = "/aquanode_pulse_frontend/aquanode-pulse-panel.js"
+DATA_FRONTEND_REGISTERED = "frontend_registered"
 
 CONF_PORT = "port"
 CONF_PASSWORD = "password"

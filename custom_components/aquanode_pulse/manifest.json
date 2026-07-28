@@ -4,7 +4,10 @@
   ],
   "config_flow": true,
   "dependencies": [
-    "zeroconf"
+    "zeroconf",
+    "http",
+    "frontend",
+    "panel_custom"
   ],
   "documentation": "https://github.com/BanVictor17/aquanode-pulse-home-assistant",
   "domain": "aquanode_pulse",
@@ -13,7 +16,7 @@
   "issue_tracker": "https://github.com/BanVictor17/aquanode-pulse-home-assistant/issues",
   "name": "AquaNode Pulse",
   "requirements": [],
-  "version": "0.3.0",
+  "version": "0.4.0",
   "zeroconf": [
     "_aquanode-pulse._tcp.local."
   ]
