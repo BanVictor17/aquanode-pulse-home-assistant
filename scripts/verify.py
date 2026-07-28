@@ -93,7 +93,43 @@ def check_imports() -> str:
     )
     if _extract(stranger) is not None:
         fail("discovery accepted a service with no serial")
-    return "ok: imports, flow registration and mDNS parsing"
+
+    # Importing the module never executes the scan, which is how a browser
+    # built without a handler shipped and turned every attempt to add the
+    # integration into a 500. So run the whole function, with a throwaway
+    # zeroconf standing in for the one Home Assistant would hand it.
+    import asyncio
+
+    from zeroconf.asyncio import AsyncZeroconf
+
+    from custom_components.aquanode_pulse import config_flow
+
+    async def run_scan() -> None:
+        aiozc = AsyncZeroconf()
+
+        async def _fake_instance(hass: object) -> AsyncZeroconf:
+            return aiozc
+
+        module = sys.modules["homeassistant.components.zeroconf"]
+        real = module.async_get_async_instance
+        module.async_get_async_instance = _fake_instance
+        original_seconds = config_flow.DISCOVERY_SECONDS
+        config_flow.DISCOVERY_SECONDS = 0.1
+        try:
+            await config_flow._async_scan(None)
+        finally:
+            config_flow.DISCOVERY_SECONDS = original_seconds
+            module.async_get_async_instance = real
+            await aiozc.async_close()
+
+    import homeassistant.components.zeroconf  # noqa: F401
+
+    try:
+        asyncio.run(run_scan())
+    except Exception as err:  # noqa: BLE001 - any failure is a failure
+        fail(f"the network scan raises: {type(err).__name__}: {err}")
+
+    return "ok: imports, flow registration, mDNS parsing and a live scan"
 
 
 import_result = check_imports()

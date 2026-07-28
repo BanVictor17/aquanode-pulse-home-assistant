@@ -67,7 +67,14 @@ async def _async_scan(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
 
     aiozc = await ha_zeroconf.async_get_async_instance(hass)
     zc = aiozc.zeroconf
-    browser = AsyncServiceBrowser(zc, [SERVICE_TYPE])
+    # The browser is only here to put a question on the wire; the answers come
+    # from the cache below. It still needs a handler: constructing one without
+    # any raises "You need to specify at least one handler".
+    browser = AsyncServiceBrowser(
+        zc,
+        [SERVICE_TYPE],
+        handlers=[lambda **kwargs: None],
+    )
     found: dict[str, dict[str, Any]] = {}
     try:
         deadline = time.monotonic() + DISCOVERY_SECONDS
