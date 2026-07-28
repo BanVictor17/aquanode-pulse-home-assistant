@@ -15,10 +15,10 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
     UnitOfElectricPotential,
     UnitOfInformation,
-    UnitOfSignalStrength,
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
@@ -52,7 +52,7 @@ SENSORS: tuple[AquaNodePulseSensorDescription, ...] = (
         key="wifi_signal",
         translation_key="wifi_signal",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-        native_unit_of_measurement=UnitOfSignalStrength.DECIBELS_MILLIWATT,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data["wifi"]["rssi_dbm"],

@@ -30,6 +30,43 @@ for path in sorted(COMPONENT.rglob("*.py")):
     except (OSError, SyntaxError) as err:
         fail(f"{path.relative_to(ROOT)}: {err}")
 
+
+def check_imports() -> str:
+    """Import every module for real, when Home Assistant is available.
+
+    Parsing only proves the syntax is valid. It cannot see that a name has moved
+    to another Home Assistant module, which is how `ConfigFlowResult` shipped
+    imported from `data_entry_flow`: the file parsed, the import raised, the
+    flow never registered, and the only symptom was "Invalid handler specified"
+    in the browser.
+    """
+    try:
+        import homeassistant  # noqa: F401
+    except ImportError:
+        return "SKIP: import check needs `pip install homeassistant`"
+
+    import importlib
+
+    sys.path.insert(0, str(ROOT))
+    for module in sorted(path.stem for path in COMPONENT.glob("*.py")):
+        name = f"custom_components.aquanode_pulse.{module}"
+        try:
+            importlib.import_module(name)
+        except Exception as err:  # noqa: BLE001 - any failure is a failure
+            fail(f"{name}: {type(err).__name__}: {err}")
+
+    # Importing is not the same as registering. Subclassing ConfigFlow with
+    # `domain=` is what puts the handler in HANDLERS, and an empty HANDLERS is
+    # precisely what Home Assistant reports as "Invalid handler specified".
+    from homeassistant.config_entries import HANDLERS
+
+    if HANDLERS.get("aquanode_pulse") is None:
+        fail("config flow did not register: Home Assistant would refuse to add it")
+    return "ok: every module imports and the config flow registers"
+
+
+import_result = check_imports()
+
 manifest = load_json(COMPONENT / "manifest.json")
 hacs = load_json(ROOT / "hacs.json")
 strings = load_json(COMPONENT / "strings.json")
@@ -80,4 +117,5 @@ if firmware.exists():
         if contract not in source:
             fail(f"firmware contract missing: {contract}")
 
+print(import_result)
 print("AquaNode Pulse Home Assistant checks: all passed")

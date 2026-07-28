@@ -8,11 +8,11 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.components import zeroconf
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
@@ -71,7 +71,7 @@ class AquaNodePulseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_zeroconf(
         self,
-        discovery_info: zeroconf.ZeroconfServiceInfo,
+        discovery_info: ZeroconfServiceInfo,
     ) -> ConfigFlowResult:
         """Receive the board's mDNS advertisement."""
         serial = _property(discovery_info.properties, "serial").upper()

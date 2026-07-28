@@ -1,0 +1,22 @@
+# hassfest and the HACS action both validate metadata. Neither imports the
+# integration, which is how a config_flow that could not be imported at all
+# passed every check and still failed in the browser.
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install homeassistant
+      - run: python scripts/verify.py
