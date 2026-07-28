@@ -83,12 +83,16 @@
       "free_heap": {
         "name": "Free memory"
       },
+      "ip_address": {
+        "name": "IP address"
+      },
       "last_interruption_cause": {
         "name": "Last interruption",
         "state": {
           "power": "Power cut",
           "network": "Network problem",
-          "unknown": "Cause unknown"
+          "unknown": "Cause unknown",
+          "maintenance": "Planned restart"
         }
       },
       "last_interruption_duration": {
@@ -96,6 +100,18 @@
       },
       "last_interruption_ended": {
         "name": "Interruption ended"
+      },
+      "last_interruption_started": {
+        "name": "Interruption started"
+      },
+      "last_voltage": {
+        "name": "Last voltage"
+      },
+      "max_alloc_heap": {
+        "name": "Largest free block"
+      },
+      "power_outage_count": {
+        "name": "Saved power outages"
       },
       "raw_voltage": {
         "name": "Raw voltage signal"
@@ -114,6 +130,9 @@
       }
     },
     "binary_sensor": {
+      "local_connection": {
+        "name": "Local connection"
+      },
       "cloud_connected": {
         "name": "AquaNode Cloud"
       },
@@ -131,6 +150,9 @@
       }
     },
     "switch": {
+      "automatic_notifications": {
+        "name": "Home Assistant notifications"
+      },
       "idle_led": {
         "name": "Status LED"
       }
@@ -141,11 +163,31 @@
       },
       "restart": {
         "name": "Restart"
+      },
+      "reset_calibration": {
+        "name": "Reset calibration"
+      },
+      "clear_history": {
+        "name": "Clear events"
+      },
+      "test_notification": {
+        "name": "Send test notification"
       }
     },
     "number": {
+      "calibration_reference": {
+        "name": "Calibration reference"
+      },
+      "notification_delay": {
+        "name": "Minimum notification time"
+      },
       "voltage_minimum": {
         "name": "Minimum voltage"
+      }
+    },
+    "text": {
+      "display_name": {
+        "name": "Device name"
       }
     }
   }

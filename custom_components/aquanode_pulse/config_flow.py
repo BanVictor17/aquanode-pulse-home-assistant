@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-from ipaddress import ip_address, ip_network
 import logging
-from collections.abc import Mapping
 import time
+from collections.abc import Mapping
+from ipaddress import ip_address, ip_network
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
@@ -28,6 +26,7 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
     TextSelectorType,
 )
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .api import (
     AquaNodePulseApi,
@@ -37,7 +36,6 @@ from .api import (
     AquaNodePulseInvalidResponse,
 )
 from .const import CONF_PASSWORD, CONF_PORT, DEFAULT_PORT, DOMAIN
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,11 +60,10 @@ async def _async_scan(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
     a board that answered before this flow opened is found immediately, and one
     that answers while it is open is picked up on the next poll.
     """
+    from homeassistant.components import zeroconf as ha_zeroconf
     from zeroconf import DNSPointer
     from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
     from zeroconf.const import _CLASS_IN, _TYPE_PTR
-
-    from homeassistant.components import zeroconf as ha_zeroconf
 
     aiozc = await ha_zeroconf.async_get_async_instance(hass)
     zc = aiozc.zeroconf
@@ -105,9 +102,11 @@ async def _async_scan(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
                 # that does not forward multicast) rather than a parsing one.
                 _LOGGER.info(
                     "AquaNode Pulse scan: %d in the zeroconf cache, %d usable",
-                    len(zc.cache.async_all_by_details(
-                        SERVICE_TYPE, _TYPE_PTR, _CLASS_IN
-                    )),
+                    len(
+                        zc.cache.async_all_by_details(
+                            SERVICE_TYPE, _TYPE_PTR, _CLASS_IN
+                        )
+                    ),
                     len(found),
                 )
                 return found
@@ -314,9 +313,7 @@ class AquaNodePulseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.debug("swept %s, found %d", network, len(found))
                     if found:
                         break
-            configured = {
-                entry.unique_id for entry in self._async_current_entries()
-            }
+            configured = {entry.unique_id for entry in self._async_current_entries()}
             self._found = {
                 serial: device
                 for serial, device in found.items()
@@ -524,16 +521,15 @@ class AquaNodePulseOptionsFlow(config_entries.OptionsFlow):
             step_id="calibrate",
             data_schema=vol.Schema(
                 {
-                    vol.Required("reference_voltage", default=230.0):
-                        NumberSelector(
-                            NumberSelectorConfig(
-                                min=50,
-                                max=280,
-                                step=0.1,
-                                mode=NumberSelectorMode.BOX,
-                                unit_of_measurement="V",
-                            ),
+                    vol.Required("reference_voltage", default=230.0): NumberSelector(
+                        NumberSelectorConfig(
+                            min=50,
+                            max=280,
+                            step=0.1,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="V",
                         ),
+                    ),
                 },
             ),
             errors=errors,

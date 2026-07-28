@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .const import CONF_AUTOMATIC_NOTIFICATIONS, DEFAULT_AUTOMATIC_NOTIFICATIONS
 from .coordinator import AquaNodePulseCoordinator
 from .entity import AquaNodePulseEntity
 
@@ -17,8 +19,12 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add the online LED control."""
+    coordinator = entry.runtime_data.coordinator
     async_add_entities(
-        [AquaNodePulseIdleLedSwitch(entry.runtime_data.coordinator)],
+        [
+            AquaNodePulseIdleLedSwitch(coordinator),
+            AquaNodePulseAutomaticNotificationsSwitch(coordinator, entry),
+        ],
     )
 
 
@@ -45,3 +51,46 @@ class AquaNodePulseIdleLedSwitch(AquaNodePulseEntity, SwitchEntity):
         """Turn the healthy-state LED off."""
         await self.coordinator.api.async_set_idle_led(False)
         await self.coordinator.async_request_refresh()
+
+
+class AquaNodePulseAutomaticNotificationsSwitch(
+    AquaNodePulseEntity,
+    SwitchEntity,
+):
+    """Enable the integration's automatic HA notification-center alerts."""
+
+    _attr_translation_key = "automatic_notifications"
+    _attr_icon = "mdi:bell-ring-outline"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: AquaNodePulseCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator, "automatic_notifications")
+        self._entry = entry
+
+    @property
+    def is_on(self) -> bool:
+        return bool(
+            self._entry.options.get(
+                CONF_AUTOMATIC_NOTIFICATIONS,
+                DEFAULT_AUTOMATIC_NOTIFICATIONS,
+            ),
+        )
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._set_enabled(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._set_enabled(False)
+
+    def _set_enabled(self, enabled: bool) -> None:
+        options = dict(self._entry.options)
+        options[CONF_AUTOMATIC_NOTIFICATIONS] = enabled
+        self.hass.config_entries.async_update_entry(
+            self._entry,
+            options=options,
+        )
+        self.async_write_ha_state()

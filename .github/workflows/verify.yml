@@ -18,5 +18,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install homeassistant
+      - run: pip install homeassistant home-assistant-frontend pytest-homeassistant-custom-component ruff
+      - run: ruff check custom_components/aquanode_pulse scripts/verify.py tests
+      - run: ruff format --check custom_components/aquanode_pulse scripts/verify.py tests
       - run: python scripts/verify.py
+      - run: python -m pytest -q
+      - run: node --check custom_components/aquanode_pulse/frontend/aquanode-pulse-panel.js

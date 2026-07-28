@@ -8,6 +8,8 @@ from typing import Any
 
 from aiohttp import ClientError, ClientResponse, ClientSession
 
+from .const import REQUEST_TIMEOUT_SECONDS
+
 
 class AquaNodePulseApiError(Exception):
     """Base error raised by the local API client."""
@@ -94,12 +96,13 @@ class AquaNodePulseApi:
         json: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         headers = (
-            {"Authorization": f"Bearer {self._password}"}
-            if authenticated
-            else None
+            {"Authorization": f"Bearer {self._password}"} if authenticated else None
         )
         try:
-            async with asyncio.timeout(5):
+            # This is a LAN-only request to an ESP32. A long HTTP timeout would
+            # make a real outage look several seconds late, so fail quickly and
+            # let the one-second coordinator retry on the next tick.
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
                 response = await self._session.request(
                     method,
                     f"{self.base_url}{path}",

@@ -23,6 +23,24 @@ BUTTONS: tuple[ButtonEntityDescription, ...] = (
         icon="mdi:restart",
         entity_category=EntityCategory.CONFIG,
     ),
+    ButtonEntityDescription(
+        key="reset_calibration",
+        translation_key="reset_calibration",
+        icon="mdi:restore",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    ButtonEntityDescription(
+        key="clear_history",
+        translation_key="clear_history",
+        icon="mdi:delete-sweep-outline",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    ButtonEntityDescription(
+        key="test_notification",
+        translation_key="test_notification",
+        icon="mdi:bell-check-outline",
+        entity_category=EntityCategory.CONFIG,
+    ),
 )
 
 
@@ -34,8 +52,7 @@ async def async_setup_entry(
     """Add Pulse actions."""
     coordinator = entry.runtime_data.coordinator
     async_add_entities(
-        AquaNodePulseButton(coordinator, description)
-        for description in BUTTONS
+        AquaNodePulseButton(coordinator, description) for description in BUTTONS
     )
 
 
@@ -57,4 +74,18 @@ class AquaNodePulseButton(AquaNodePulseEntity, ButtonEntity):
         if self.entity_description.key == "identify":
             await self.coordinator.api.async_identify()
             return
-        await self.coordinator.api.async_restart()
+        if self.entity_description.key == "restart":
+            self.coordinator.suppress_connection_alerts()
+            await self.coordinator.api.async_restart()
+            return
+        if self.entity_description.key == "reset_calibration":
+            await self.coordinator.api.async_reset_voltage_calibration()
+            await self.coordinator.async_request_refresh()
+            return
+        if self.entity_description.key == "test_notification":
+            self.coordinator.send_test_notification()
+            return
+        await self.coordinator.history.async_clear_events(
+            self.coordinator.serial,
+        )
+        await self.coordinator.async_request_refresh()

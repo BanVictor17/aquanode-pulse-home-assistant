@@ -1,99 +1,216 @@
 blueprint:
-  name: AquaNode Pulse - interruption alert
+  name: AquaNode Pulse - notificări pe telefon
   description: >-
-    Sends a notification the moment contact with an AquaNode Pulse is lost, and
-    a second one when it returns saying whether it was a power cut or a network
-    problem.
-
-    The board cannot report during a power cut, because it has no power. The
-    first message is therefore honest about being a suspicion; only the second,
-    sent once the board is back, states the cause, and it states it from the
-    board's own boot counter rather than a guess.
+    Trimite notificări push când un AquaNode Pulse nu mai răspunde, când
+    revine și confirmă dacă a fost o pană sau rețeaua, precum și când
+    tensiunea scade sub limită. Comunicarea și clasificarea rămân locale.
   domain: automation
   input:
     pulse_entity:
-      name: Pulse
-      description: The "Last interruption" sensor of the board to watch.
+      name: Dispozitiv Pulse
+      description: >-
+        Alege entitatea Conexiune locală a dispozitivului pe care vrei să îl
+        urmărești. Aceasta trece pe oprit imediat când Pulse nu răspunde.
       selector:
         entity:
           filter:
             integration: aquanode_pulse
-            domain: sensor
+            domain: binary_sensor
+            device_class: connectivity
     notify_target:
-      name: Notification service
-      description: Where the messages go, for example notify.mobile_app_your_phone.
+      name: Serviciul telefonului
+      description: >-
+        De exemplu notify.mobile_app_telefonul_meu. Îl găsești în Developer
+        tools, Actions, căutând notify.mobile_app.
       selector:
         text:
     quiet_seconds:
-      name: Ignore interruptions shorter than
+      name: Timp minim înainte de prima notificare
       description: >-
-        A router that blinks for a few seconds is not news. Interruptions
-        shorter than this send no message at all.
-      default: 30
+        0 trimite imediat. Incidentele mai scurte decât această valoare rămân
+        în jurnalul AquaNode Pulse, dar nu trimit push.
+      default: 0
       selector:
         number:
           min: 0
           max: 600
-          unit_of_measurement: seconds
+          unit_of_measurement: sec
           mode: box
+    language:
+      name: Limba notificărilor
+      default: ro
+      selector:
+        select:
+          options:
+            - label: Română
+              value: ro
+            - label: English
+              value: en
+    voltage_alerts:
+      name: Trimite și alertele de tensiune
+      default: true
+      selector:
+        boolean:
 
 mode: queued
-max: 10
+max: 20
+
+variables:
+  pulse_entity_id: !input pulse_entity
+  quiet_seconds_value: !input quiet_seconds
+  selected_language: !input language
+  include_voltage: !input voltage_alerts
+  watched_serial: "{{ state_attr(pulse_entity_id, 'aquanode_serial') }}"
+  watched_name: >-
+    {{ state_attr(pulse_entity_id, 'aquanode_name') or 'AquaNode Pulse' }}
 
 triggers:
   - trigger: state
     entity_id: !input pulse_entity
-    to: unavailable
+    to: "off"
     for:
-      seconds: 20
+      seconds: !input quiet_seconds
     id: lost
   - trigger: event
     event_type: aquanode_pulse_interruption
-    id: back
+    id: restored
+  - trigger: event
+    event_type: aquanode_pulse_voltage_low
+    id: voltage_low
+  - trigger: event
+    event_type: aquanode_pulse_voltage_recovered
+    id: voltage_recovered
 
 actions:
   - choose:
       - conditions:
           - condition: trigger
             id: lost
-        sequence:
-          - action: !input notify_target
-            data:
-              title: Possible power cut
-              message: >-
-                {{ state_attr(trigger.entity_id, 'friendly_name') or 'AquaNode Pulse' }}
-                stopped answering. It is either the power or the network; you
-                will get a second message once it is back.
-      - conditions:
-          - condition: trigger
-            id: back
           - condition: template
             value_template: >-
-              {{ trigger.event.data.duration_seconds | int >= (quiet_seconds | int) }}
+              {{ not trigger.to_state.attributes.get('maintenance', false) }}
         sequence:
-          - variables:
-              minutes: "{{ (trigger.event.data.duration_seconds | int / 60) | round(0) }}"
           - action: !input notify_target
             data:
               title: >-
-                {% set cause = trigger.event.data.cause %}
-                {% if cause == 'power' %}Power is back
-                {% elif cause == 'network' %}Network is back
-                {% else %}Connection is back
+                {% if selected_language == 'ro' %}
+                  Posibilă pană de curent
+                {% else %}
+                  Possible power outage
                 {% endif %}
               message: >-
-                {% set cause = trigger.event.data.cause %}
-                {% set name = trigger.event.data.name or 'AquaNode Pulse' %}
-                {% if cause == 'power' %}
-                  {{ name }} restarted, so the power really was off. It was gone
-                  for about {{ minutes }} min.
-                {% elif cause == 'network' %}
-                  {{ name }} stayed powered the whole time, so the power was
-                  never off. It was the network, for about {{ minutes }} min.
+                {% if selected_language == 'ro' %}
+                  {{ watched_name }} nu mai răspunde. Cauza va fi confirmată
+                  imediat ce dispozitivul revine.
                 {% else %}
-                  {{ name }} is answering again after about {{ minutes }} min.
-                  There is not enough evidence to say whether it was the power
-                  or the network.
+                  {{ watched_name }} stopped responding. The cause will be
+                  confirmed as soon as the device returns.
                 {% endif %}
-variables:
-  quiet_seconds: !input quiet_seconds
+
+      - conditions:
+          - condition: trigger
+            id: restored
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.device_id == watched_serial
+                 and trigger.event.data.duration_seconds | float(0)
+                   >= quiet_seconds_value | float(0)
+                 and trigger.event.data.cause != 'maintenance' }}
+        sequence:
+          - variables:
+              event_cause: "{{ trigger.event.data.cause }}"
+              event_duration: "{{ trigger.event.data.duration_seconds | float(0) }}"
+              duration_text: >-
+                {% if event_duration < 60 %}
+                  {{ event_duration | round(0) | int }} sec
+                {% elif event_duration < 3600 %}
+                  {{ (event_duration / 60) | round(0) | int }} min
+                {% else %}
+                  {{ (event_duration / 3600) | round(1) }} h
+                {% endif %}
+          - action: !input notify_target
+            data:
+              title: >-
+                {% if selected_language == 'ro' %}
+                  {% if event_cause == 'power' %}Curentul a revenit
+                  {% elif event_cause == 'network' %}Conexiunea a revenit
+                  {% else %}Dispozitivul a revenit
+                  {% endif %}
+                {% else %}
+                  {% if event_cause == 'power' %}Power is back
+                  {% elif event_cause == 'network' %}Connection restored
+                  {% else %}Device is back
+                  {% endif %}
+                {% endif %}
+              message: >-
+                {% if selected_language == 'ro' %}
+                  {% if event_cause == 'power' %}
+                    {{ watched_name }} confirmă o pană de curent de
+                    {{ duration_text }}.
+                  {% elif event_cause == 'network' %}
+                    {{ watched_name }} a rămas alimentat. A fost o problemă de
+                    rețea de {{ duration_text }}.
+                  {% else %}
+                    {{ watched_name }} răspunde din nou după {{ duration_text }},
+                    dar cauza nu a putut fi stabilită sigur.
+                  {% endif %}
+                {% else %}
+                  {% if event_cause == 'power' %}
+                    {{ watched_name }} confirms a power outage lasting
+                    {{ duration_text }}.
+                  {% elif event_cause == 'network' %}
+                    {{ watched_name }} stayed powered. This was a network
+                    problem lasting {{ duration_text }}.
+                  {% else %}
+                    {{ watched_name }} is responding after {{ duration_text }},
+                    but the cause could not be confirmed.
+                  {% endif %}
+                {% endif %}
+
+      - conditions:
+          - condition: trigger
+            id: voltage_low
+          - condition: template
+            value_template: >-
+              {{ include_voltage
+                 and trigger.event.data.device_id == watched_serial }}
+        sequence:
+          - action: !input notify_target
+            data:
+              title: >-
+                {{ 'Tensiune scăzută'
+                   if selected_language == 'ro' else 'Low voltage' }}
+              message: >-
+                {% if selected_language == 'ro' %}
+                  {{ watched_name }} măsoară
+                  {{ trigger.event.data.voltage | round(1) }} V, sub limita de
+                  {{ trigger.event.data.threshold | round(1) }} V.
+                {% else %}
+                  {{ watched_name }} measures
+                  {{ trigger.event.data.voltage | round(1) }} V, below the
+                  {{ trigger.event.data.threshold | round(1) }} V limit.
+                {% endif %}
+
+      - conditions:
+          - condition: trigger
+            id: voltage_recovered
+          - condition: template
+            value_template: >-
+              {{ include_voltage
+                 and trigger.event.data.device_id == watched_serial }}
+        sequence:
+          - action: !input notify_target
+            data:
+              title: >-
+                {{ 'Tensiunea a revenit'
+                   if selected_language == 'ro' else 'Voltage recovered' }}
+              message: >-
+                {% if selected_language == 'ro' %}
+                  {{ watched_name }} măsoară din nou
+                  {{ trigger.event.data.voltage | round(1) }} V. Minimul a
+                  fost {{ trigger.event.data.minimum_voltage | round(1) }} V.
+                {% else %}
+                  {{ watched_name }} now measures
+                  {{ trigger.event.data.voltage | round(1) }} V. The minimum
+                  was {{ trigger.event.data.minimum_voltage | round(1) }} V.
+                {% endif %}

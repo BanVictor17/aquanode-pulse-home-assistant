@@ -1,22 +1,23 @@
 {
+  "domain": "aquanode_pulse",
+  "name": "AquaNode Pulse",
   "codeowners": [
     "@BanVictor17"
   ],
   "config_flow": true,
   "dependencies": [
-    "zeroconf",
-    "http",
     "frontend",
-    "panel_custom"
+    "http",
+    "panel_custom",
+    "persistent_notification",
+    "zeroconf"
   ],
   "documentation": "https://github.com/BanVictor17/aquanode-pulse-home-assistant",
-  "domain": "aquanode_pulse",
   "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/BanVictor17/aquanode-pulse-home-assistant/issues",
-  "name": "AquaNode Pulse",
   "requirements": [],
-  "version": "0.4.0",
+  "version": "0.5.0",
   "zeroconf": [
     "_aquanode-pulse._tcp.local."
   ]

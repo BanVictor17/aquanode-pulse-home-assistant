@@ -21,7 +21,7 @@
       },
       "pick": {
         "title": "Alege produsul AquaNode Pulse",
-        "description": "Aceste produse au raspuns in reteaua ta. Alege-l pe cel pe care vrei sa il adaugi.",
+        "description": "Aceste produse au răspuns în rețeaua ta. Alege-l pe cel pe care vrei să îl adaugi.",
         "data": {
           "device": "Dispozitiv"
         }
@@ -83,12 +83,16 @@
       "free_heap": {
         "name": "Memorie liberă"
       },
+      "ip_address": {
+        "name": "Adresă IP"
+      },
       "last_interruption_cause": {
         "name": "Ultima întrerupere",
         "state": {
           "power": "Pană de curent",
           "network": "Problemă de rețea",
-          "unknown": "Cauză necunoscută"
+          "unknown": "Cauză necunoscută",
+          "maintenance": "Repornire planificată"
         }
       },
       "last_interruption_duration": {
@@ -96,6 +100,18 @@
       },
       "last_interruption_ended": {
         "name": "Întreruperea s-a încheiat"
+      },
+      "last_interruption_started": {
+        "name": "Întreruperea a început"
+      },
+      "last_voltage": {
+        "name": "Ultima tensiune"
+      },
+      "max_alloc_heap": {
+        "name": "Cel mai mare bloc liber"
+      },
+      "power_outage_count": {
+        "name": "Pene de curent salvate"
       },
       "raw_voltage": {
         "name": "Semnal brut tensiune"
@@ -114,6 +130,9 @@
       }
     },
     "binary_sensor": {
+      "local_connection": {
+        "name": "Conexiune locală"
+      },
       "cloud_connected": {
         "name": "AquaNode Cloud"
       },
@@ -131,6 +150,9 @@
       }
     },
     "switch": {
+      "automatic_notifications": {
+        "name": "Notificări Home Assistant"
+      },
       "idle_led": {
         "name": "LED de stare"
       }
@@ -141,11 +163,31 @@
       },
       "restart": {
         "name": "Repornește"
+      },
+      "reset_calibration": {
+        "name": "Șterge calibrarea"
+      },
+      "clear_history": {
+        "name": "Șterge evenimentele"
+      },
+      "test_notification": {
+        "name": "Trimite notificare de test"
       }
     },
     "number": {
+      "calibration_reference": {
+        "name": "Referință calibrare"
+      },
+      "notification_delay": {
+        "name": "Timp minim pentru notificări"
+      },
       "voltage_minimum": {
         "name": "Tensiune minimă"
+      }
+    },
+    "text": {
+      "display_name": {
+        "name": "Nume dispozitiv"
       }
     }
   }

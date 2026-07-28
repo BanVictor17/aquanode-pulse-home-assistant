@@ -36,8 +36,14 @@ class AquaNodePulseEntity(CoordinatorEntity[AquaNodePulseCoordinator]):
         return {
             "aquanode_pulse": True,
             "aquanode_serial": data["serial"],
-            "aquanode_name": data.get("name") or MODEL,
+            "aquanode_name": self.coordinator.display_name,
             "aquanode_metric": self._key,
+            "aquanode_firmware": data.get("firmware"),
+            "aquanode_ip": data.get("wifi", {}).get("ip"),
+            "aquanode_boot_count": data.get("boot_count"),
+            "aquanode_free_heap": data.get("diagnostics", {}).get(
+                "free_heap_bytes",
+            ),
         }
 
     @property
@@ -48,7 +54,7 @@ class AquaNodePulseEntity(CoordinatorEntity[AquaNodePulseCoordinator]):
             identifiers={(DOMAIN, data["serial"])},
             manufacturer=MANUFACTURER,
             model=MODEL,
-            name=data.get("name", MODEL),
+            name=self.coordinator.display_name,
             sw_version=data.get("firmware"),
             configuration_url=self.coordinator.api.base_url,
         )

@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import ast
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "aquanode_pulse"
@@ -41,7 +41,7 @@ def check_imports() -> str:
     in the browser.
     """
     try:
-        import homeassistant  # noqa: F401
+        import homeassistant
     except ImportError:
         return "SKIP: import check needs `pip install homeassistant`"
 
@@ -203,13 +203,155 @@ def check_imports() -> str:
     if event is None or event.cause != POWER or event.duration_seconds != 300.0:
         fail(f"the tracker misread a power cut: {event}")
 
-    quiet = InterruptionTracker()
-    quiet.poll_succeeded(0.0, {"boot_count": 7, "uptime_s": 900})
-    quiet.poll_failed(10.0)
-    if quiet.poll_succeeded(12.0, {"boot_count": 7, "uptime_s": 912}) is not None:
-        fail("a two second blip was reported as an interruption")
+    short = InterruptionTracker()
+    short.poll_succeeded(0.0, {"boot_count": 7, "uptime_s": 900})
+    short.poll_failed(10.0, 1_000.0)
+    short_event = short.poll_succeeded(
+        12.0,
+        {"boot_count": 7, "uptime_s": 912},
+        1_002.0,
+    )
+    if (
+        short_event is None
+        or short_event.cause != NETWORK
+        or short_event.duration_seconds != 2.0
+        or short_event.started_at != 1_000.0
+    ):
+        fail(f"a two second interruption was not retained: {short_event}")
 
-    return "ok: imports, flow, mDNS, scan, sweep and interruption classification"
+    restored = InterruptionTracker()
+    restored.restore_boot_count(41)
+    restored.poll_failed(10.0, 1_000.0)
+    restored_event = restored.poll_succeeded(
+        15.0,
+        {"boot_count": 42, "uptime_s": 3},
+        1_005.0,
+    )
+    if restored_event is None or restored_event.cause != POWER:
+        fail(f"persisted boot evidence was ignored: {restored_event}")
+
+    resumed = InterruptionTracker()
+    resumed.restore_boot_count(41)
+    resumed.restore_offline(100.0, 1_005.0, 1_000.0)
+    resumed_event = resumed.poll_succeeded(
+        102.0,
+        {"boot_count": 42, "uptime_s": 3},
+        1_007.0,
+    )
+    if (
+        resumed_event is None
+        or resumed_event.cause != POWER
+        or resumed_event.started_at != 1_000.0
+        or resumed_event.duration_seconds != 7.0
+    ):
+        fail(f"an interruption spanning an HA restart was lost: {resumed_event}")
+
+    from custom_components.aquanode_pulse.history import add_to_bucket, prune_rows
+
+    rows = []
+    if not add_to_bucket(rows, 60, 230.0, 60):
+        fail("the first voltage sample did not open a bucket")
+    if add_to_bucket(rows, 61, 232.0, 60):
+        fail("a sample in the same minute opened another bucket")
+    if rows != [
+        {
+            "at": 60,
+            "minimum": 230.0,
+            "maximum": 232.0,
+            "average": 231.0,
+            "count": 2,
+        }
+    ]:
+        fail(f"voltage aggregation is wrong: {rows}")
+    add_to_bucket(rows, 120, 228.0, 60)
+    prune_rows(rows, 100)
+    if len(rows) != 1 or rows[0]["at"] != 120:
+        fail(f"voltage retention is wrong: {rows}")
+
+    # Prove that graphs and events actually survive a Home Assistant restart,
+    # rather than only checking the in-memory aggregation helpers.
+    import tempfile
+    import time
+
+    from homeassistant.core import HomeAssistant
+
+    from custom_components.aquanode_pulse.history import PulseHistory
+
+    async def run_persistence() -> None:
+        with tempfile.TemporaryDirectory() as config_dir:
+            hass = HomeAssistant(config_dir)
+            now = time.time()
+            history = PulseHistory(hass)
+            await history.async_load()
+            history.record_voltage("AP-429385", now, 231.4)
+            await history.async_start_connection_loss(
+                "AP-429385",
+                started_at=now - 2,
+                maintenance_until=None,
+            )
+            await history.async_save()
+
+            restored = PulseHistory(hass)
+            await restored.async_load()
+            pending = restored.pending_connection("AP-429385")
+            if pending is None or pending["started_at"] != round(now - 2, 3):
+                fail(f"active connection loss was not restored: {pending}")
+            await restored.async_add_interruption(
+                "AP-429385",
+                cause=POWER,
+                started_at=float(pending["started_at"]),
+                ended_at=now,
+                duration_seconds=2,
+            )
+
+            reloaded = PulseHistory(hass)
+            await reloaded.async_load()
+            if reloaded.pending_connection("AP-429385") is not None:
+                fail("completed connection loss remained marked as active")
+            payload = reloaded.payload("AP-429385", "year")
+            if (
+                payload["saved_event_count"] != 1
+                or payload["power_outage_count"] != 1
+                or payload["last_voltage"]["value"] != 231.4
+                or len(payload["voltage"]) != 1
+            ):
+                fail(f"persistent history did not round-trip: {payload}")
+            await hass.async_stop(force=True)
+
+    try:
+        asyncio.run(run_persistence())
+    except Exception as err:  # noqa: BLE001 - persistence must really work
+        fail(f"persistent history raises: {type(err).__name__}: {err}")
+
+    # Parse the phone automation through Home Assistant's real blueprint
+    # schema. Plain YAML parsing would miss invalid selectors and inputs.
+    from homeassistant.components.automation.config import (
+        AUTOMATION_BLUEPRINT_SCHEMA,
+    )
+    from homeassistant.components.blueprint.models import Blueprint
+    from homeassistant.util.yaml import load_yaml
+
+    blueprint_path = (
+        ROOT
+        / "blueprints"
+        / "automation"
+        / "aquanode_pulse"
+        / "interruption_alert.yaml"
+    )
+    try:
+        Blueprint(
+            load_yaml(blueprint_path),
+            path=str(blueprint_path),
+            expected_domain="automation",
+            schema=AUTOMATION_BLUEPRINT_SCHEMA,
+        )
+    except Exception as err:  # noqa: BLE001 - schema rejection is a failure
+        fail(f"phone blueprint is invalid: {type(err).__name__}: {err}")
+
+    return (
+        "ok: imports, flow, mDNS, scan, sweep, interruption classification "
+        "and persistent voltage/event history"
+    )
 
 
 import_result = check_imports()
@@ -235,6 +377,16 @@ required_manifest = {
 missing = required_manifest - manifest.keys()
 if missing:
     fail(f"manifest keys missing: {sorted(missing)}")
+manifest_keys = list(manifest)
+expected_manifest_keys = [
+    "domain",
+    "name",
+    *sorted(set(manifest_keys) - {"domain", "name"}),
+]
+if manifest_keys != expected_manifest_keys:
+    fail("manifest keys must be ordered domain, name, then alphabetically")
+if manifest.get("dependencies") != sorted(manifest.get("dependencies", [])):
+    fail("manifest dependencies must be sorted alphabetically")
 if manifest["domain"] != "aquanode_pulse":
     fail("unexpected integration domain")
 if "_aquanode-pulse._tcp.local." not in manifest["zeroconf"]:
@@ -245,6 +397,37 @@ if strings != english:
     fail("strings.json and English translation differ")
 if set(strings["entity"]) != set(romanian["entity"]):
     fail("Romanian entity groups do not match English")
+for platform, entities in strings["entity"].items():
+    if set(entities) != set(romanian["entity"].get(platform, {})):
+        fail(f"Romanian {platform} entities do not match English")
+if manifest["version"] != "0.5.0":
+    fail("manifest version was not bumped for the dashboard/history release")
+
+frontend = (COMPONENT / "frontend" / "aquanode-pulse-panel.js").read_text()
+for contract in (
+    "aquanode_pulse/history",
+    "aquanode_pulse/clear_history",
+    "data-device-tab",
+    "voltageChart",
+    "outageChart",
+    "set-notification-delay",
+    "phone-help",
+    "rename-device",
+    "test-notification",
+):
+    if contract not in frontend:
+        fail(f"frontend contract missing: {contract}")
+
+blueprint = (
+    ROOT / "blueprints" / "automation" / "aquanode_pulse" / "interruption_alert.yaml"
+).read_text()
+for event_type in (
+    "aquanode_pulse_interruption",
+    "aquanode_pulse_voltage_low",
+    "aquanode_pulse_voltage_recovered",
+):
+    if event_type not in blueprint:
+        fail(f"mobile blueprint does not handle {event_type}")
 
 firmware = (
     ROOT.parent

@@ -23,10 +23,7 @@ from dataclasses import dataclass
 POWER = "power"
 NETWORK = "network"
 UNKNOWN = "unknown"
-
-# Below this, an interruption is the poll interval jittering or one dropped
-# packet, not something worth telling anyone about.
-MINIMUM_SECONDS = 5
+MAINTENANCE = "maintenance"
 
 
 def classify(
@@ -71,6 +68,7 @@ class InterruptionTracker:
     def __init__(self) -> None:
         self.last: Interruption | None = None
         self._offline_since: float | None = None
+        self._offline_since_wall: float | None = None
         self._boot_count: int | None = None
 
     @property
@@ -78,12 +76,46 @@ class InterruptionTracker:
         """When contact was lost, while it is still lost."""
         return self._offline_since
 
-    def poll_failed(self, now: float) -> None:
-        """The board did not answer."""
+    @property
+    def offline_since_wall(self) -> float | None:
+        """Unix time at which contact was first lost."""
+        return self._offline_since_wall
+
+    def restore_boot_count(self, value: int | None) -> None:
+        """Restore classification evidence saved before an HA restart."""
+        self._boot_count = value
+
+    def restore_offline(
+        self,
+        now: float,
+        wall_time: float,
+        started_at_wall: float,
+    ) -> None:
+        """Restore a contact loss that began before Home Assistant restarted."""
+        elapsed = max(0.0, wall_time - started_at_wall)
+        self._offline_since = now - elapsed
+        self._offline_since_wall = started_at_wall
+
+    def offline_seconds(self, now: float) -> float:
+        """Return the current contact-loss duration."""
+        if self._offline_since is None:
+            return 0.0
+        return max(0.0, now - self._offline_since)
+
+    def poll_failed(self, now: float, wall_time: float | None = None) -> bool:
+        """Record a failed poll and return True only for the first failure."""
         if self._offline_since is None:
             self._offline_since = now
+            self._offline_since_wall = wall_time
+            return True
+        return False
 
-    def poll_succeeded(self, now: float, data: dict) -> Interruption | None:
+    def poll_succeeded(
+        self,
+        now: float,
+        data: dict,
+        wall_time: float | None = None,
+    ) -> Interruption | None:
         """The board answered. Returns an interruption if one just ended."""
         boot_count = _integer(data.get("boot_count"))
         uptime = _number(data.get("uptime_s"))
@@ -91,18 +123,20 @@ class InterruptionTracker:
         self._boot_count = boot_count
 
         started_at = self._offline_since
+        started_at_wall = self._offline_since_wall
         self._offline_since = None
+        self._offline_since_wall = None
         if started_at is None:
             return None
 
         offline_seconds = max(0.0, now - started_at)
-        if offline_seconds < MINIMUM_SECONDS:
-            return None
-
+        ended_at_wall = wall_time if wall_time is not None else now
+        if started_at_wall is None:
+            started_at_wall = ended_at_wall - offline_seconds
         self.last = Interruption(
             cause=classify(previous_boot_count, boot_count, uptime, offline_seconds),
-            started_at=started_at,
-            ended_at=now,
+            started_at=started_at_wall,
+            ended_at=ended_at_wall,
         )
         return self.last
 

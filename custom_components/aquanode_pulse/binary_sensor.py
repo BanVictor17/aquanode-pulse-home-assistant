@@ -55,8 +55,7 @@ BINARY_SENSORS: tuple[AquaNodePulseBinaryDescription, ...] = (
         translation_key="calibration_required",
         device_class=BinarySensorDeviceClass.PROBLEM,
         value_fn=lambda data, _threshold: (
-            data["voltage"]["sensor_present"]
-            and not data["voltage"]["calibrated"]
+            data["voltage"]["sensor_present"] and not data["voltage"]["calibrated"]
         ),
     ),
     AquaNodePulseBinaryDescription(
@@ -81,9 +80,42 @@ async def async_setup_entry(
     """Add Pulse binary sensors."""
     coordinator = entry.runtime_data.coordinator
     async_add_entities(
-        AquaNodePulseBinarySensor(coordinator, entry, description)
-        for description in BINARY_SENSORS
+        [
+            *(
+                AquaNodePulseBinarySensor(coordinator, entry, description)
+                for description in BINARY_SENSORS
+            ),
+            AquaNodePulseLocalConnection(coordinator),
+        ],
     )
+
+
+class AquaNodePulseLocalConnection(AquaNodePulseEntity, BinarySensorEntity):
+    """A stable online/offline state that never becomes unavailable itself."""
+
+    _attr_translation_key = "local_connection"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator: AquaNodePulseCoordinator) -> None:
+        super().__init__(coordinator, "local_connection")
+
+    @property
+    def available(self) -> bool:
+        """Keep the entity readable while the physical device is offline."""
+        return True
+
+    @property
+    def is_on(self) -> bool:
+        """Return the result of the most recent one-second local poll."""
+        return self.coordinator.last_update_success
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose planned maintenance to phone-notification automations."""
+        return {
+            **super().extra_state_attributes,
+            "maintenance": self.coordinator.in_maintenance,
+        }
 
 
 class AquaNodePulseBinarySensor(AquaNodePulseEntity, BinarySensorEntity):

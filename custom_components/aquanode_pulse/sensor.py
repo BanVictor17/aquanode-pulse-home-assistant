@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Any
+from datetime import datetime
+from typing import Any, ClassVar
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -24,11 +24,11 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.util.dt import utcnow
+from homeassistant.util import dt as dt_util
 
 from .coordinator import AquaNodePulseCoordinator
 from .entity import AquaNodePulseEntity
-from .interruptions import NETWORK, POWER, UNKNOWN
+from .interruptions import MAINTENANCE, NETWORK, POWER, UNKNOWN
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -47,9 +47,7 @@ SENSORS: tuple[AquaNodePulseSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
         value_fn=lambda data: (
-            data["voltage"]["voltage_v"]
-            if data["voltage"]["calibrated"]
-            else None
+            data["voltage"]["voltage_v"] if data["voltage"]["calibrated"] else None
         ),
     ),
     AquaNodePulseSensorDescription(
@@ -71,10 +69,16 @@ SENSORS: tuple[AquaNodePulseSensorDescription, ...] = (
         value_fn=lambda data: data["uptime_s"],
     ),
     AquaNodePulseSensorDescription(
+        key="ip_address",
+        translation_key="ip_address",
+        icon="mdi:ip-network",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data["wifi"]["ip"],
+    ),
+    AquaNodePulseSensorDescription(
         key="boot_count",
         translation_key="boot_count",
         entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
         value_fn=lambda data: data["boot_count"],
     ),
     AquaNodePulseSensorDescription(
@@ -104,8 +108,17 @@ SENSORS: tuple[AquaNodePulseSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfInformation.BYTES,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
         value_fn=lambda data: data["diagnostics"]["free_heap_bytes"],
+    ),
+    AquaNodePulseSensorDescription(
+        key="max_alloc_heap",
+        translation_key="max_alloc_heap",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda data: data["diagnostics"]["max_alloc_heap_bytes"],
     ),
 )
 
@@ -119,18 +132,26 @@ async def async_setup_entry(
     coordinator = entry.runtime_data.coordinator
     async_add_entities(
         [
-            *(
-                AquaNodePulseSensor(coordinator, description)
-                for description in SENSORS
-            ),
+            *(AquaNodePulseSensor(coordinator, description) for description in SENSORS),
             AquaNodePulseLastInterruptionCause(coordinator),
+            AquaNodePulseLastInterruptionStarted(coordinator),
             AquaNodePulseLastInterruptionEnded(coordinator),
             AquaNodePulseLastInterruptionDuration(coordinator),
+            AquaNodePulsePowerOutageCount(coordinator),
+            AquaNodePulseLastVoltage(coordinator),
         ]
     )
 
 
-class AquaNodePulseLastInterruptionCause(AquaNodePulseEntity, SensorEntity):
+class AquaNodePulseHistorySensor(AquaNodePulseEntity, SensorEntity):
+    """A saved value that remains readable while the board is offline."""
+
+    @property
+    def available(self) -> bool:
+        return True
+
+
+class AquaNodePulseLastInterruptionCause(AquaNodePulseHistorySensor):
     """What the most recent loss of contact turned out to be.
 
     Every other entity here is a diagnostic reading. This one answers the
@@ -140,18 +161,40 @@ class AquaNodePulseLastInterruptionCause(AquaNodePulseEntity, SensorEntity):
 
     _attr_translation_key = "last_interruption_cause"
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = [POWER, NETWORK, UNKNOWN]
+    _attr_options: ClassVar[list[str]] = [
+        POWER,
+        NETWORK,
+        UNKNOWN,
+        MAINTENANCE,
+    ]
 
     def __init__(self, coordinator: AquaNodePulseCoordinator) -> None:
         super().__init__(coordinator, "last_interruption_cause")
 
     @property
     def native_value(self) -> str | None:
-        last = self.coordinator.interruptions.last
-        return None if last is None else last.cause
+        last = self.coordinator.last_interruption
+        return None if last is None else str(last["kind"])
 
 
-class AquaNodePulseLastInterruptionEnded(AquaNodePulseEntity, SensorEntity):
+class AquaNodePulseLastInterruptionStarted(AquaNodePulseHistorySensor):
+    """When contact was first lost."""
+
+    _attr_translation_key = "last_interruption_started"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator: AquaNodePulseCoordinator) -> None:
+        super().__init__(coordinator, "last_interruption_started")
+
+    @property
+    def native_value(self) -> datetime | None:
+        last = self.coordinator.last_interruption
+        if last is None:
+            return None
+        return dt_util.utc_from_timestamp(float(last["started_at"]))
+
+
+class AquaNodePulseLastInterruptionEnded(AquaNodePulseHistorySensor):
     """When contact was restored."""
 
     _attr_translation_key = "last_interruption_ended"
@@ -162,17 +205,13 @@ class AquaNodePulseLastInterruptionEnded(AquaNodePulseEntity, SensorEntity):
 
     @property
     def native_value(self) -> datetime | None:
-        last = self.coordinator.interruptions.last
+        last = self.coordinator.last_interruption
         if last is None:
             return None
-        # The tracker counts on the loop's monotonic clock, which is immune to
-        # the system time being corrected underneath it. Only the offset from
-        # now is meaningful, so it is converted at the moment it is read.
-        elapsed = self.hass.loop.time() - last.ended_at
-        return utcnow() - timedelta(seconds=elapsed)
+        return dt_util.utc_from_timestamp(float(last["ended_at"]))
 
 
-class AquaNodePulseLastInterruptionDuration(AquaNodePulseEntity, SensorEntity):
+class AquaNodePulseLastInterruptionDuration(AquaNodePulseHistorySensor):
     """How long the board was out of contact."""
 
     _attr_translation_key = "last_interruption_duration"
@@ -185,8 +224,56 @@ class AquaNodePulseLastInterruptionDuration(AquaNodePulseEntity, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        last = self.coordinator.interruptions.last
-        return None if last is None else last.duration_seconds
+        last = self.coordinator.last_interruption
+        return None if last is None else float(last["duration_seconds"])
+
+
+class AquaNodePulsePowerOutageCount(AquaNodePulseHistorySensor):
+    """Number of real power outages retained in the local journal."""
+
+    _attr_translation_key = "power_outage_count"
+    _attr_icon = "mdi:power-plug-off"
+
+    def __init__(self, coordinator: AquaNodePulseCoordinator) -> None:
+        super().__init__(coordinator, "power_outage_count")
+
+    @property
+    def native_value(self) -> int:
+        return self.coordinator.history.interruption_count(
+            self.coordinator.serial,
+        )
+
+
+class AquaNodePulseLastVoltage(AquaNodePulseHistorySensor):
+    """Last valid voltage, kept visible through an outage."""
+
+    _attr_translation_key = "last_voltage"
+    _attr_device_class = SensorDeviceClass.VOLTAGE
+    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator: AquaNodePulseCoordinator) -> None:
+        super().__init__(coordinator, "last_voltage")
+
+    @property
+    def native_value(self) -> float | None:
+        reading = self.coordinator.history.last_voltage(
+            self.coordinator.serial,
+        )
+        return None if reading is None else float(reading["value"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        reading = self.coordinator.history.last_voltage(
+            self.coordinator.serial,
+        )
+        attributes = super().extra_state_attributes
+        if reading is None:
+            return attributes
+        return {
+            **attributes,
+            "measured_at": dt_util.utc_from_timestamp(float(reading["at"])),
+        }
 
 
 class AquaNodePulseSensor(AquaNodePulseEntity, SensorEntity):

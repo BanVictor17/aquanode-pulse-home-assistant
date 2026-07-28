@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ro">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AquaNode Pulse panel preview</title>
+    <style>
+      html, body { margin: 0; min-height: 100%; background: #040b08; }
+    </style>
+  </head>
+  <body>
+    <aquanode-pulse-panel></aquanode-pulse-panel>
+    <script src="../custom_components/aquanode_pulse/frontend/aquanode-pulse-panel.js"></script>
+    <script>
+      const now = Date.now();
+      const iso = (milliseconds) => new Date(milliseconds).toISOString();
+      const serial = "AP-429385";
+      const common = {
+        aquanode_pulse: true,
+        aquanode_serial: serial,
+        aquanode_name: "Acasă",
+        aquanode_firmware: "1.3.0",
+        aquanode_ip: "192.168.1.42",
+        aquanode_boot_count: 38,
+        aquanode_free_heap: 168432,
+      };
+      const states = {};
+
+      function add(domain, name, metric, state, attributes = {}) {
+        const entityId = `${domain}.acasa_${name}`;
+        states[entityId] = {
+          entity_id: entityId,
+          state: String(state),
+          last_changed: iso(now - 3_721_000),
+          last_updated: iso(now - 1_000),
+          attributes: {
+            ...common,
+            aquanode_metric: metric,
+            friendly_name: name.replaceAll("_", " "),
+            ...attributes,
+          },
+        };
+      }
+
+      add("sensor", "tensiune", "voltage", "231.7", { unit_of_measurement: "V" });
+      add("sensor", "ultima_tensiune", "last_voltage", "231.7", {
+        unit_of_measurement: "V",
+        measured_at: iso(now - 1_000),
+      });
+      add("sensor", "semnal_wifi", "wifi_signal", "-57", { unit_of_measurement: "dBm" });
+      add("sensor", "timp_functionare", "uptime", "18421", { unit_of_measurement: "s" });
+      add("sensor", "adresa_ip", "ip_address", "192.168.1.42");
+      add("sensor", "porniri", "boot_count", "38");
+      add("sensor", "memorie", "free_heap", "168432", { unit_of_measurement: "B" });
+      add("sensor", "cauza", "last_interruption_cause", "power");
+      add("sensor", "inceput", "last_interruption_started", iso(now - 86_000_000));
+      add("sensor", "final", "last_interruption_ended", iso(now - 85_912_000));
+      add("sensor", "durata", "last_interruption_duration", "88", { unit_of_measurement: "s" });
+      add("sensor", "numar_pene", "power_outage_count", "3");
+      add("number", "limita_tensiune", "voltage_minimum", "200", { unit_of_measurement: "V" });
+      add("number", "intarziere_notificari", "notification_delay", "0", { unit_of_measurement: "s" });
+      add("number", "referinta_calibrare", "calibration_reference", "230", { unit_of_measurement: "V" });
+      add("switch", "led", "idle_led", "on");
+      add("switch", "notificari", "automatic_notifications", "on");
+      add("text", "nume", "display_name", "Acasă");
+      add("binary_sensor", "cloud", "cloud_connected", "on");
+      add("binary_sensor", "conexiune_locala", "local_connection", "on");
+      add("binary_sensor", "modul_tensiune", "voltage_sensor_problem", "off");
+      add("binary_sensor", "semnal_saturat", "voltage_clipped", "off");
+      add("binary_sensor", "calibrare", "calibration_required", "off");
+      add("binary_sensor", "tensiune_scazuta", "low_voltage", "off");
+      add("button", "identifica", "identify", "unknown");
+      add("button", "restart", "restart", "unknown");
+      add("button", "sterge_calibrarea", "reset_calibration", "unknown");
+      add("button", "sterge_istoricul", "clear_history", "unknown");
+      add("button", "notificare_test", "test_notification", "unknown");
+
+      const events = [
+        {
+          id: "connection-1",
+          kind: "power",
+          started_at: (now - 86_000_000) / 1_000,
+          ended_at: (now - 85_912_000) / 1_000,
+          duration_seconds: 88,
+        },
+        {
+          id: "connection-2",
+          kind: "network",
+          started_at: (now - 259_200_000) / 1_000,
+          ended_at: (now - 259_158_000) / 1_000,
+          duration_seconds: 42,
+        },
+        {
+          id: "voltage-1",
+          kind: "voltage",
+          started_at: (now - 356_400_000) / 1_000,
+          ended_at: (now - 356_100_000) / 1_000,
+          duration_seconds: 300,
+          minimum_voltage: 188.4,
+          restored_voltage: 224.8,
+          threshold_voltage: 200,
+        },
+        {
+          id: "connection-3",
+          kind: "power",
+          started_at: (now - 432_000_000) / 1_000,
+          ended_at: (now - 431_580_000) / 1_000,
+          duration_seconds: 420,
+        },
+      ];
+
+      function voltageRows(period) {
+        const definitions = {
+          day: [96, 15 * 60_000],
+          week: [112, 90 * 60_000],
+          month: [120, 6 * 60 * 60_000],
+          year: [120, 3 * 24 * 60 * 60_000],
+        };
+        const [count, step] = definitions[period] || definitions.day;
+        return Array.from({ length: count }, (_, index) => {
+          const wave = Math.sin(index / 7) * 2.2 + Math.cos(index / 13) * 0.8;
+          const average = 230.4 + wave;
+          return {
+            at: Math.floor((now - (count - index) * step) / 1_000),
+            minimum: Number((average - 1.3 - (index % 9 === 0 ? 2.5 : 0)).toFixed(2)),
+            average: Number(average.toFixed(2)),
+            maximum: Number((average + 1.2).toFixed(2)),
+            count: 60,
+          };
+        });
+      }
+
+      const hass = {
+        language: "ro",
+        states,
+        callService: async () => undefined,
+        connection: {
+          sendMessagePromise: async (message) => {
+            if (message.type === "aquanode_pulse/clear_history") return { ok: true };
+            return {
+              serial,
+              period: message.period,
+              from: (now - 31_536_000_000) / 1_000,
+              to: now / 1_000,
+              events,
+              recent_events: events,
+              voltage: voltageRows(message.period),
+              last_voltage: { at: (now - 1_000) / 1_000, value: 231.7 },
+              saved_event_count: events.length,
+              power_outage_count: 2,
+            };
+          },
+        },
+      };
+
+      const panel = document.querySelector("aquanode-pulse-panel");
+      panel.narrow = window.innerWidth < 600;
+      panel.hass = hass;
+    </script>
+  </body>
+</html>
