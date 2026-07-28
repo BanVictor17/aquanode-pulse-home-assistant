@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
@@ -17,6 +18,9 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
@@ -30,6 +34,78 @@ from .api import (
     AquaNodePulseInvalidResponse,
 )
 from .const import CONF_PASSWORD, CONF_PORT, DEFAULT_PORT, DOMAIN
+
+
+SERVICE_TYPE = "_aquanode-pulse._tcp.local."
+DISCOVERY_SECONDS = 3.0
+MANUAL = "manual"
+
+
+async def _async_scan(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
+    """Look for Pulse boards on the LAN, keyed by serial.
+
+    Home Assistant announces devices it discovered on its own as a separate card
+    on the integrations page. Picking the integration from the Add Integration
+    list always starts here instead, which is why this used to open a bare form
+    asking for an IP address that nobody knows by heart. So this step does its
+    own short browse and offers whatever answers.
+    """
+    from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
+
+    from homeassistant.components import zeroconf as ha_zeroconf
+
+    aiozc = await ha_zeroconf.async_get_async_instance(hass)
+    names: list[str] = []
+
+    # python-zeroconf fires this with keyword arguments, so the first parameter
+    # has to be called `zeroconf` or the call raises and nothing is ever found.
+    def _found(
+        zeroconf: Any,
+        service_type: str,
+        name: str,
+        state_change: Any,
+    ) -> None:
+        if name not in names:
+            names.append(name)
+
+    browser = AsyncServiceBrowser(
+        aiozc.zeroconf,
+        [SERVICE_TYPE],
+        handlers=[_found],
+    )
+    try:
+        await asyncio.sleep(DISCOVERY_SECONDS)
+    finally:
+        await browser.async_cancel()
+
+    found: dict[str, dict[str, Any]] = {}
+    for name in names:
+        info = AsyncServiceInfo(SERVICE_TYPE, name)
+        if not await info.async_request(aiozc.zeroconf, 2000):
+            continue
+        if (device := _extract(info)) is None:
+            continue
+        serial, host, port = device
+        found[serial] = {
+            CONF_HOST: host,
+            CONF_PORT: port,
+            "name": f"AquaNode Pulse {serial.removeprefix('AP-')}",
+        }
+    return found
+
+
+def _extract(info: Any) -> tuple[str, str, int] | None:
+    """Pull serial, address and port out of one mDNS answer.
+
+    `info.properties` is keyed by bytes; only Home Assistant's own
+    ZeroconfServiceInfo normalises to str. Reading "serial" off the raw mapping
+    returns nothing, which rejects every board as "not one of ours".
+    """
+    serial = str(info.decoded_properties.get("serial") or "").upper()
+    addresses = info.parsed_scoped_addresses()
+    if not addresses or not serial.startswith("AP-"):
+        return None
+    return serial, addresses[0], info.port or DEFAULT_PORT
 
 
 def _property(properties: dict[str, Any], key: str) -> str:
@@ -68,6 +144,7 @@ class AquaNodePulseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._port = DEFAULT_PORT
         self._serial: str | None = None
         self._name: str | None = None
+        self._found: dict[str, dict[str, Any]] = {}
 
     async def async_step_zeroconf(
         self,
@@ -140,6 +217,62 @@ class AquaNodePulseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
+        """Offer the boards found on the network, or fall back to a manual IP."""
+        if user_input is None:
+            found = await _async_scan(self.hass)
+            configured = {
+                entry.unique_id for entry in self._async_current_entries()
+            }
+            self._found = {
+                serial: device
+                for serial, device in found.items()
+                if serial not in configured
+            }
+            if self._found:
+                return await self.async_step_pick()
+        return await self.async_step_manual(user_input)
+
+    async def async_step_pick(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Let the customer choose one of the boards that answered."""
+        if user_input is not None:
+            choice = user_input["device"]
+            if choice == MANUAL:
+                return await self.async_step_manual()
+            device = self._found[choice]
+            self._host = device[CONF_HOST]
+            self._port = device[CONF_PORT]
+            self._serial = choice
+            self._name = device["name"]
+            await self.async_set_unique_id(choice, raise_on_progress=False)
+            self._abort_if_unique_id_configured()
+            return await self.async_step_confirm()
+
+        options = [
+            {"value": serial, "label": f"{device['name']} ({device[CONF_HOST]})"}
+            for serial, device in self._found.items()
+        ]
+        options.append({"value": MANUAL, "label": "Enter an IP address manually"})
+        return self.async_show_form(
+            step_id="pick",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("device"): SelectSelector(
+                        SelectSelectorConfig(
+                            options=options,
+                            mode=SelectSelectorMode.LIST,
+                        ),
+                    ),
+                },
+            ),
+        )
+
+    async def async_step_manual(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
         """Manual fallback when mDNS cannot cross a VLAN."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -173,7 +306,7 @@ class AquaNodePulseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
 
         return self.async_show_form(
-            step_id="user",
+            step_id="manual",
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_HOST): str,

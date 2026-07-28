@@ -62,7 +62,38 @@ def check_imports() -> str:
 
     if HANDLERS.get("aquanode_pulse") is None:
         fail("config flow did not register: Home Assistant would refuse to add it")
-    return "ok: every module imports and the config flow registers"
+
+    # The mDNS record the board really advertises, straight from `dns-sd -L`.
+    # Raw ServiceInfo properties are keyed by bytes, so reading them with a str
+    # key returns nothing and every board is silently rejected as "not ours".
+    import socket
+
+    from zeroconf import ServiceInfo
+
+    from custom_components.aquanode_pulse.config_flow import _extract
+
+    info = ServiceInfo(
+        "_aquanode-pulse._tcp.local.",
+        "AquaNode Pulse 429385._aquanode-pulse._tcp.local.",
+        addresses=[socket.inet_aton("192.168.1.42")],
+        port=6053,
+        properties={"serial": "AP-429385", "model": "pulse", "api": "1"},
+        server="aquanode-pulse-429385.local.",
+    )
+    if _extract(info) != ("AP-429385", "192.168.1.42", 6053):
+        fail(f"discovery would not recognise a real board: {_extract(info)}")
+
+    stranger = ServiceInfo(
+        "_aquanode-pulse._tcp.local.",
+        "somebody else._aquanode-pulse._tcp.local.",
+        addresses=[socket.inet_aton("192.168.1.43")],
+        port=6053,
+        properties={"model": "pulse"},
+        server="stranger.local.",
+    )
+    if _extract(stranger) is not None:
+        fail("discovery accepted a service with no serial")
+    return "ok: imports, flow registration and mDNS parsing"
 
 
 import_result = check_imports()

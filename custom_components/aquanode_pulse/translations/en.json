@@ -10,13 +10,20 @@
           "password": "Setup password"
         }
       },
-      "user": {
+      "manual": {
         "title": "Add AquaNode Pulse manually",
         "description": "Use this only when Home Assistant and Pulse are separated by a VLAN that blocks mDNS.",
         "data": {
           "host": "IP address or hostname",
           "port": "Local API port",
           "password": "Setup password"
+        }
+      },
+      "pick": {
+        "title": "Choose your AquaNode Pulse",
+        "description": "These boards answered on your network. Pick the one you want to add.",
+        "data": {
+          "device": "Device"
         }
       },
       "reauth_confirm": {

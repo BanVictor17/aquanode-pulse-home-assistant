@@ -10,13 +10,20 @@
           "password": "Parola de configurare"
         }
       },
-      "user": {
+      "manual": {
         "title": "Adaugă manual AquaNode Pulse",
         "description": "Folosește această opțiune doar dacă Home Assistant și Pulse sunt separate de un VLAN care blochează mDNS.",
         "data": {
           "host": "Adresă IP sau nume local",
           "port": "Port API local",
           "password": "Parola de configurare"
+        }
+      },
+      "pick": {
+        "title": "Alege produsul AquaNode Pulse",
+        "description": "Aceste produse au raspuns in reteaua ta. Alege-l pe cel pe care vrei sa il adaugi.",
+        "data": {
+          "device": "Dispozitiv"
         }
       },
       "reauth_confirm": {
