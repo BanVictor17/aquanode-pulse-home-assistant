@@ -48,7 +48,9 @@
         measured_at: iso(now - 1_000),
       });
       add("sensor", "semnal_wifi", "wifi_signal", "-57", { unit_of_measurement: "dBm" });
-      add("sensor", "timp_functionare", "uptime", "18421", { unit_of_measurement: "s" });
+      // Hours, because suggested_unit_of_measurement converts this sensor before
+      // it reaches the frontend. A fixture in seconds hid a real bug once.
+      add("sensor", "timp_functionare", "uptime", "5.1169", { unit_of_measurement: "h" });
       add("sensor", "adresa_ip", "ip_address", "192.168.1.42");
       add("sensor", "porniri", "boot_count", "38");
       add("sensor", "memorie", "free_heap", "168432", { unit_of_measurement: "B" });

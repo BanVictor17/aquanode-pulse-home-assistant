@@ -318,6 +318,20 @@ function numberState(state) {
   return Number.isFinite(value) ? value : null;
 }
 
+// The uptime sensor declares suggested_unit_of_measurement=HOURS, so Home
+// Assistant stores its state already converted and the raw number is hours, not
+// seconds. Reading it as seconds turned a five hour uptime into "5 sec". The
+// unit travels on the state, so use it rather than assuming.
+const DURATION_SECONDS = { ms: 0.001, s: 1, sec: 1, min: 60, h: 3_600, d: 86_400 };
+
+function durationSeconds(state) {
+  const value = numberState(state);
+  if (value === null) return null;
+  const unit = String(state?.attributes?.unit_of_measurement || "s").toLowerCase();
+  const factor = DURATION_SECONDS[unit];
+  return factor === undefined ? null : value * factor;
+}
+
 function duration(seconds, language) {
   const value = Number(seconds);
   if (!Number.isFinite(value) || value < 0) return "-";
@@ -435,9 +449,7 @@ class AquaNodePulsePanel extends HTMLElement {
   }
 
   get language() {
-    return String(this._hass?.language || "").toLowerCase().startsWith("ro")
-      ? "ro"
-      : "en";
+    return "ro";
   }
 
   get t() {
@@ -642,10 +654,8 @@ class AquaNodePulsePanel extends HTMLElement {
     const online = this.isOnline(device);
     const voltage = numberState(this.metric(device, "voltage"))
       ?? numberState(this.metric(device, "last_voltage"));
-    const statusMoment = this.metric(
-      device,
-      "local_connection",
-    )?.last_changed;
+    const uptimeSeconds = durationSeconds(this.metric(device, "uptime"));
+    const statusMoment = this.metric(device, "local_connection")?.last_changed;
     return `
       <button class="device-card card ${online ? "online" : "offline"}" data-open-device="${escapeHtml(device.serial)}">
         <span class="rail"></span>
@@ -659,7 +669,11 @@ class AquaNodePulsePanel extends HTMLElement {
           ${icon("chevron")}
         </span>
         <span class="device-foot" data-card-meta="${escapeHtml(device.serial)}" data-status-moment="${escapeHtml(statusMoment || "")}">
-          ${online ? this.t.connectedFor : this.t.offlineFor} ${sinceIso(statusMoment, this.language)}
+          ${online ? this.t.connectedFor : this.t.offlineFor} ${
+            online && uptimeSeconds !== null
+              ? duration(uptimeSeconds, this.language)
+              : sinceIso(statusMoment, this.language)
+          }
           <i>·</i> ${escapeHtml(device.serial)}
         </span>
       </button>
@@ -745,7 +759,7 @@ class AquaNodePulsePanel extends HTMLElement {
     const online = this.isOnline(device);
     const state = this.metric(device, "uptime");
     if (online) {
-      return `${this.t.connectedFor} ${duration(numberState(state), this.language)}`;
+      return `${this.t.connectedFor} ${duration(durationSeconds(state), this.language)}`;
     }
     return `${this.t.offlineFor} ${sinceIso(state?.last_updated, this.language)}`;
   }
@@ -1183,8 +1197,13 @@ class AquaNodePulsePanel extends HTMLElement {
       if (stateNode) stateNode.textContent = online ? this.t.powerOn : this.t.noContact;
       if (voltageNode) voltageNode.textContent = formatVoltage(voltage);
       if (metaNode) {
-        const when = metaNode.dataset.statusMoment;
-        metaNode.firstChild.textContent = `${online ? this.t.connectedFor : this.t.offlineFor} ${sinceIso(when, this.language)} `;
+        // Same source as the first render, or the once-a-second tick would put
+        // the Home Assistant restart time straight back.
+        const uptimeSeconds = durationSeconds(this.metric(device, "uptime"));
+        const elapsed = online && uptimeSeconds !== null
+          ? duration(uptimeSeconds, this.language)
+          : sinceIso(metaNode.dataset.statusMoment, this.language);
+        metaNode.firstChild.textContent = `${online ? this.t.connectedFor : this.t.offlineFor} ${elapsed} `;
       }
     }
 
@@ -1541,7 +1560,12 @@ class AquaNodePulsePanel extends HTMLElement {
         border: 1px solid var(--pulse-line); border-radius: 13px; color: var(--pulse-text);
         background: var(--pulse-surface); cursor: pointer;
       }
-      main { width: min(620px, 100%); min-height: calc(100dvh - 74px); margin: 0 auto; padding: 16px 17px 100px; }
+      main { width: min(620px, 100%); min-height: calc(100dvh - 74px); margin: 0 auto; padding: 16px 17px 18px; }
+      /* Spacing used to come only from .section-head, so any two blocks that
+         happened to follow each other without a heading between them sat flush:
+         the voltage limit card and the incident journal touched. Excluding the
+         heading on both sides keeps its own larger rhythm intact. */
+      main > *:not(.section-head) + *:not(.section-head) { margin-top: 12px; }
       .card {
         position: relative; overflow: hidden; border: 1px solid var(--pulse-line);
         border-radius: 20px; background: linear-gradient(145deg, rgba(15,32,22,.98), var(--pulse-surface));
@@ -1716,11 +1740,11 @@ class AquaNodePulsePanel extends HTMLElement {
       .info-row > span:not(.row-icon) { color: var(--pulse-muted); font-size: 12.5px; }
       .info-row > strong { max-width: 190px; overflow-wrap: anywhere; font-size: 12px; text-align: right; }
       .device-tabs {
-        position: fixed; z-index: 42; left: 50%; bottom: max(8px,env(safe-area-inset-bottom));
-        width: min(calc(100% - 24px),460px); display: flex; gap: 5px; padding: 6px;
+        position: sticky; z-index: 42; bottom: max(8px,env(safe-area-inset-bottom));
+        width: min(calc(100% - 24px),460px); margin: 0 auto; display: flex; gap: 5px; padding: 6px;
         border: 1px solid var(--pulse-line-strong); border-radius: 22px;
         background: rgba(13,28,20,.94); box-shadow: 0 18px 52px -18px rgba(0,0,0,.82);
-        backdrop-filter: blur(24px) saturate(160%); transform: translateX(-50%);
+        backdrop-filter: blur(24px) saturate(160%);
       }
       .device-tabs button { min-height: 49px; flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 7px 8px; border: 0; border-radius: 16px; color: var(--pulse-faint); background: transparent; font-size: 11.5px; font-weight: 680; cursor: pointer; }
       .device-tabs button.on { color: var(--pulse-accent); background: rgba(247,201,95,.1); }
