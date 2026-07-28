@@ -158,6 +158,23 @@
       const panel = document.querySelector("aquanode-pulse-panel");
       panel.narrow = window.innerWidth < 600;
       panel.hass = hass;
+      let live = hass;
+      setInterval(() => {
+        const next = { ...live, states: { ...live.states } };
+        for (const [id, state] of Object.entries(next.states)) {
+          const metric = state.attributes && state.attributes.aquanode_metric;
+          if (metric === "voltage") {
+            next.states[id] = { ...state, state: (230 + Math.random()).toFixed(1),
+              last_updated: new Date().toISOString() };
+          }
+          if (metric === "voltage_clipped") {
+            next.states[id] = { ...state, state: state.state === "on" ? "off" : "on",
+              last_updated: new Date().toISOString() };
+          }
+        }
+        live = next;
+        panel.hass = next;
+      }, 1000);
     </script>
   </body>
 </html>

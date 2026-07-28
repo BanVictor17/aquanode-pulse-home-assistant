@@ -404,6 +404,7 @@ class AquaNodePulsePanel extends HTMLElement {
     this._loading = new Set();
     this._renderSignature = "";
     this._visualSignature = "";
+    this._renderPending = false;
     this._toastTimer = null;
     this._tickTimer = null;
     this._historyTimer = null;
@@ -437,6 +438,21 @@ class AquaNodePulsePanel extends HTMLElement {
     const structure = this.structureSignature();
     const visual = this.visualSignature();
     if (!this.shadowRoot.innerHTML || structure !== this._renderSignature || visual !== this._visualSignature) {
+      // A full render replaces the shadow root, taking any open dialog with it.
+      // Values the signature watches do flicker on real hardware: the voltage
+      // clipping flag toggles with mains noise, and at one poll a second that
+      // shut a dialog before it could be read. Hold the render until the dialog
+      // is gone; the live values keep updating underneath it either way.
+      if (this.shadowRoot.querySelector(".modal-backdrop")) {
+        this._renderPending = true;
+        this.updateLive();
+        return;
+      }
+      this.render(true);
+      return;
+    }
+    if (this._renderPending && !this.shadowRoot.querySelector(".modal-backdrop")) {
+      this._renderPending = false;
       this.render(true);
       return;
     }
@@ -564,6 +580,19 @@ class AquaNodePulsePanel extends HTMLElement {
     }
   }
 
+  writeSection(node, markup) {
+    if (!node || node.dataset.markup === markup) return;
+    const expanded = new Set(
+      [...node.querySelectorAll("details[open][data-section]")]
+        .map((child) => child.dataset.section),
+    );
+    node.innerHTML = markup;
+    node.dataset.markup = markup;
+    for (const child of node.querySelectorAll("details[data-section]")) {
+      if (expanded.has(child.dataset.section)) child.open = true;
+    }
+  }
+
   render(preserveScroll = false) {
     if (!this.shadowRoot || !this._hass) {
       if (this.shadowRoot) {
@@ -572,6 +601,10 @@ class AquaNodePulsePanel extends HTMLElement {
       return;
     }
     const scrollTop = preserveScroll ? window.scrollY : 0;
+    const expanded = new Set(
+      [...this.shadowRoot.querySelectorAll("details[open][data-section]")]
+        .map((node) => node.dataset.section),
+    );
     if (this._screen.name === "device" && !this.device()) {
       this._screen = { name: "home", serial: null, tab: "general" };
     }
@@ -584,6 +617,9 @@ class AquaNodePulsePanel extends HTMLElement {
       <div class="toast" id="toast" role="status"></div>
       <div id="modalRoot"></div>
     `;
+    for (const node of this.shadowRoot.querySelectorAll("details[data-section]")) {
+      if (expanded.has(node.dataset.section)) node.open = true;
+    }
     this._renderSignature = this.structureSignature();
     this._visualSignature = this.visualSignature();
     this.bind();
@@ -904,7 +940,7 @@ class AquaNodePulsePanel extends HTMLElement {
         ${this.settingsRow({ action: "restart", icon: "refresh", title: this.t.restart, hint: this.language === "ro" ? "Repornire controlată, fără alertă falsă de pană." : "Controlled restart without a false outage alert.", danger: true })}
       </section>
 
-      <details class="diagnostics card">
+      <details class="diagnostics card" data-section="diagnostics">
         <summary>
           <span><small class="eyebrow">${this.t.diagnostics}</small><strong>${this.t.deviceInformation}</strong></span>
           ${icon("chevron")}
@@ -1101,7 +1137,7 @@ class AquaNodePulsePanel extends HTMLElement {
       if (event.restored_voltage) details.push([this.t.restoredAt, formatVoltage(event.restored_voltage)]);
     }
     return `
-      <details class="event-row ${kind}">
+      <details class="event-row ${kind}" data-section="event-${kind}-${started}">
         <summary>
           <span class="event-dot"></span>
           <span class="event-copy"><strong>${causeLabel(kind, this.t)}</strong><small>${status}</small></span>
@@ -1131,12 +1167,13 @@ class AquaNodePulsePanel extends HTMLElement {
           events.filter((item) => item.kind === "power").length,
         );
       }
-      if (chart) chart.innerHTML = this.outageChart(events, period);
-      if (journal) {
-        journal.innerHTML = recent.length
+      this.writeSection(chart, this.outageChart(events, period));
+      this.writeSection(
+        journal,
+        recent.length
           ? [...recent].reverse().slice(0, 12).map((event) => this.eventRow(event)).join("")
-          : `<div class="empty-row card">${this.t.noEvents}</div>`;
-      }
+          : `<div class="empty-row card">${this.t.noEvents}</div>`,
+      );
       return;
     }
     if (this._screen.tab === "voltage" && period === this._period.voltage) {
@@ -1144,15 +1181,16 @@ class AquaNodePulsePanel extends HTMLElement {
       const threshold = numberState(this.metric(device, "voltage_minimum")) ?? 0;
       const chart = this.shadowRoot.querySelector("[data-voltage-chart-container]");
       const journal = this.shadowRoot.querySelector("[data-voltage-journal]");
-      if (chart) chart.innerHTML = this.voltageChart(history.voltage || [], threshold);
-      if (journal) {
-        const incidents = (history.recent_events || []).filter(
-          (event) => event.kind === "voltage",
-        );
-        journal.innerHTML = incidents.length
+      this.writeSection(chart, this.voltageChart(history.voltage || [], threshold));
+      const incidents = (history.recent_events || []).filter(
+        (event) => event.kind === "voltage",
+      );
+      this.writeSection(
+        journal,
+        incidents.length
           ? [...incidents].reverse().slice(0, 8).map((event) => this.eventRow(event)).join("")
-          : `<div class="empty-row card">${this.t.noVoltageIncidents}</div>`;
-      }
+          : `<div class="empty-row card">${this.t.noVoltageIncidents}</div>`,
+      );
     }
   }
 

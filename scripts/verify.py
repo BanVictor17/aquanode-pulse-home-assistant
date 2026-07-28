@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -400,8 +401,15 @@ if set(strings["entity"]) != set(romanian["entity"]):
 for platform, entities in strings["entity"].items():
     if set(entities) != set(romanian["entity"].get(platform, {})):
         fail(f"Romanian {platform} entities do not match English")
-if manifest["version"] != "0.5.0":
-    fail("manifest version was not bumped for the dashboard/history release")
+# Pinning the literal version here failed every release after the one it was
+# written for. What HACS actually needs is a version it can compare.
+if not re.fullmatch(r"\d+\.\d+\.\d+", str(manifest["version"])):
+    fail(f"manifest version is not x.y.z: {manifest['version']!r}")
+
+# hassfest requires domain and name first, then the rest alphabetically.
+keys = list(manifest)
+if keys[:2] != ["domain", "name"] or keys[2:] != sorted(keys[2:]):
+    fail("manifest keys must be ordered domain, name, then alphabetically")
 
 frontend = (COMPONENT / "frontend" / "aquanode-pulse-panel.js").read_text()
 for contract in (
