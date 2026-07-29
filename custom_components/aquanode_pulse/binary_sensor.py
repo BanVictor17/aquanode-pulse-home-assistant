@@ -115,6 +115,7 @@ class AquaNodePulseLocalConnection(AquaNodePulseEntity, BinarySensorEntity):
         return {
             **super().extra_state_attributes,
             "maintenance": self.coordinator.in_maintenance,
+            "router_on_ups": self.coordinator.router_on_ups_enabled,
             **self.coordinator.poll_diagnostics,
         }
 

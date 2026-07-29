@@ -19,7 +19,7 @@
         aquanode_pulse: true,
         aquanode_serial: serial,
         aquanode_name: "Acasă",
-        aquanode_firmware: "1.3.0",
+        aquanode_firmware: "1.3.1",
         aquanode_ip: "192.168.1.42",
         aquanode_boot_count: 38,
         aquanode_free_heap: 168432,
@@ -64,6 +64,7 @@
       add("number", "referinta_calibrare", "calibration_reference", "230", { unit_of_measurement: "V" });
       add("switch", "led", "idle_led", "on");
       add("switch", "notificari", "automatic_notifications", "on");
+      add("switch", "router_ups", "router_on_ups", "off");
       add("switch", "diagnostic", "diagnostic_logging", "off");
       add("text", "nume", "display_name", "Acasă");
       add("binary_sensor", "cloud", "cloud_connected", "on");
@@ -77,6 +78,7 @@
         last_poll_issue_at: (now - 1_800_000) / 1_000,
         last_response_ms: 17.4,
         connection_loss_confirmed: false,
+        router_on_ups: false,
       });
       add("binary_sensor", "modul_tensiune", "voltage_sensor_problem", "off");
       add("binary_sensor", "semnal_saturat", "voltage_clipped", "off");

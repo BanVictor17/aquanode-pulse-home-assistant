@@ -29,6 +29,8 @@ STORAGE_VERSION = 1
 SAVE_DELAY_SECONDS = 5
 EVENT_RETENTION_SECONDS = 400 * 24 * 60 * 60
 MAX_EVENTS_PER_DEVICE = 2_000
+HISTORY_FORMAT = 2
+LEGACY_TRANSIENT_MAX_SECONDS = 2.5
 
 SERIES = {
     "minute": (60, 26 * 60 * 60),
@@ -44,6 +46,19 @@ PERIODS = {
 }
 
 INTERRUPTION_KINDS = {"power", "network", "unknown", "maintenance"}
+
+
+def _is_legacy_transient_network_event(event: Any) -> bool:
+    """Identify only the old two-second poll artifacts, not proven Wi-Fi loss."""
+    if not isinstance(event, dict):
+        return False
+    if event.get("kind") != "network" or event.get("evidence"):
+        return False
+    try:
+        duration = float(event.get("duration_seconds"))
+    except (TypeError, ValueError):
+        return False
+    return 0 <= duration <= LEGACY_TRANSIENT_MAX_SECONDS
 
 
 def add_to_bucket(
@@ -112,6 +127,23 @@ class PulseHistory:
             self.data = loaded
         self.data.setdefault("devices", {})
         self.loaded = True
+        migrated = False
+        for device in self.data["devices"].values():
+            if not isinstance(device, dict):
+                continue
+            if int(device.get("history_format") or 1) >= HISTORY_FORMAT:
+                continue
+            events = device.get("events")
+            if isinstance(events, list):
+                device["events"] = [
+                    event
+                    for event in events
+                    if not _is_legacy_transient_network_event(event)
+                ]
+            device["history_format"] = HISTORY_FORMAT
+            migrated = True
+        if migrated:
+            await self.async_save()
 
     def _device(self, serial: str) -> dict[str, Any]:
         devices = self.data.setdefault("devices", {})
@@ -121,8 +153,10 @@ class PulseHistory:
                 "events": [],
                 "voltage": {name: [] for name in SERIES},
                 "last_boot_count": None,
+                "last_wifi_disconnect_count": None,
                 "last_voltage": None,
                 "pending_connection": None,
+                "history_format": HISTORY_FORMAT,
             },
         )
         device.setdefault("events", [])
@@ -130,8 +164,10 @@ class PulseHistory:
         for name in SERIES:
             voltage.setdefault(name, [])
         device.setdefault("last_boot_count", None)
+        device.setdefault("last_wifi_disconnect_count", None)
         device.setdefault("last_voltage", None)
         device.setdefault("pending_connection", None)
+        device.setdefault("history_format", HISTORY_FORMAT)
         return device
 
     def last_boot_count(self, serial: str) -> int | None:
@@ -152,6 +188,26 @@ class PulseHistory:
         if device.get("last_boot_count") == parsed:
             return
         device["last_boot_count"] = parsed
+        self._schedule_save()
+
+    def last_wifi_disconnect_count(self, serial: str) -> int | None:
+        """Return the last per-boot Wi-Fi disconnect count."""
+        value = self._device(serial).get("last_wifi_disconnect_count")
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def record_wifi_disconnect_count(self, serial: str, value: Any) -> None:
+        """Persist changed Wi-Fi evidence without writing every poll."""
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return
+        device = self._device(serial)
+        if device.get("last_wifi_disconnect_count") == parsed:
+            return
+        device["last_wifi_disconnect_count"] = parsed
         self._schedule_save()
 
     def record_voltage(self, serial: str, at: float, value: Any) -> None:
@@ -215,6 +271,14 @@ class PulseHistory:
         await self.async_save()
         return deepcopy(pending)
 
+    async def async_cancel_connection_loss(self, serial: str) -> None:
+        """Discard a pending contact loss proven to be only a local poll gap."""
+        device = self._device(serial)
+        if device.get("pending_connection") is None:
+            return
+        device["pending_connection"] = None
+        await self.async_save()
+
     async def async_add_interruption(
         self,
         serial: str,
@@ -223,6 +287,7 @@ class PulseHistory:
         started_at: float,
         ended_at: float,
         duration_seconds: float,
+        evidence: str | None = None,
     ) -> dict[str, Any]:
         """Save one completed loss of contact."""
         event = {
@@ -231,6 +296,7 @@ class PulseHistory:
             "started_at": round(started_at, 3),
             "ended_at": round(ended_at, 3),
             "duration_seconds": round(max(0.0, duration_seconds), 3),
+            "evidence": evidence,
         }
         self._device(serial)["pending_connection"] = None
         self._append_event(serial, event)

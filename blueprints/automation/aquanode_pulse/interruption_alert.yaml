@@ -93,18 +93,36 @@ actions:
           - action: !input notify_target
             data:
               title: >-
+                {% set router_on_ups =
+                  trigger.to_state.attributes.get('router_on_ups', false) %}
                 {% if selected_language == 'ro' %}
-                  Posibilă pană de curent
+                  {{ 'Pană de curent detectată'
+                     if router_on_ups else 'Posibilă pană de curent' }}
                 {% else %}
-                  Possible power outage
+                  {{ 'Power outage detected'
+                     if router_on_ups else 'Possible power outage' }}
                 {% endif %}
               message: >-
+                {% set router_on_ups =
+                  trigger.to_state.attributes.get('router_on_ups', false) %}
                 {% if selected_language == 'ro' %}
-                  {{ watched_name }} nu mai răspunde. Cauza va fi confirmată
-                  imediat ce dispozitivul revine.
+                  {% if router_on_ups %}
+                    {{ watched_name }} nu mai răspunde. Modul Router protejat
+                    prin UPS este activ, deci evenimentul este raportat imediat
+                    ca pană. Cauza va fi verificată la revenire.
+                  {% else %}
+                    {{ watched_name }} nu mai răspunde. Cauza va fi confirmată
+                    imediat ce dispozitivul revine.
+                  {% endif %}
                 {% else %}
-                  {{ watched_name }} stopped responding. The cause will be
-                  confirmed as soon as the device returns.
+                  {% if router_on_ups %}
+                    {{ watched_name }} stopped responding. Router protected by
+                    UPS mode is enabled, so this is reported immediately as a
+                    power outage. The cause will be checked on reconnect.
+                  {% else %}
+                    {{ watched_name }} stopped responding. The cause will be
+                    confirmed as soon as the device returns.
+                  {% endif %}
                 {% endif %}
 
       - conditions:
@@ -119,6 +137,8 @@ actions:
         sequence:
           - variables:
               event_cause: "{{ trigger.event.data.cause }}"
+              router_on_ups: >-
+                {{ trigger.event.data.router_on_ups | default(false) | bool }}
               event_duration: "{{ trigger.event.data.duration_seconds | float(0) }}"
               duration_text: >-
                 {% if event_duration < 60 %}
@@ -133,12 +153,16 @@ actions:
               title: >-
                 {% if selected_language == 'ro' %}
                   {% if event_cause == 'power' %}Curentul a revenit
+                  {% elif event_cause == 'network' and router_on_ups %}Corecție: a fost rețeaua
                   {% elif event_cause == 'network' %}Conexiunea a revenit
+                  {% elif event_cause == 'transient' %}Alertă corectată
                   {% else %}Dispozitivul a revenit
                   {% endif %}
                 {% else %}
                   {% if event_cause == 'power' %}Power is back
+                  {% elif event_cause == 'network' and router_on_ups %}Correction: it was the network
                   {% elif event_cause == 'network' %}Connection restored
+                  {% elif event_cause == 'transient' %}Alert corrected
                   {% else %}Device is back
                   {% endif %}
                 {% endif %}
@@ -150,6 +174,9 @@ actions:
                   {% elif event_cause == 'network' %}
                     {{ watched_name }} a rămas alimentat. A fost o problemă de
                     rețea de {{ duration_text }}.
+                  {% elif event_cause == 'transient' %}
+                    {{ watched_name }} a rămas alimentat, iar Wi-Fi-ul nu s-a
+                    deconectat. A fost doar o pauză a citirii locale.
                   {% else %}
                     {{ watched_name }} răspunde din nou după {{ duration_text }},
                     dar cauza nu a putut fi stabilită sigur.
@@ -161,6 +188,9 @@ actions:
                   {% elif event_cause == 'network' %}
                     {{ watched_name }} stayed powered. This was a network
                     problem lasting {{ duration_text }}.
+                  {% elif event_cause == 'transient' %}
+                    {{ watched_name }} stayed powered and Wi-Fi did not
+                    disconnect. Only the local status read was interrupted.
                   {% else %}
                     {{ watched_name }} is responding after {{ duration_text }},
                     but the cause could not be confirmed.

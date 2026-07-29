@@ -26,6 +26,9 @@ el.
 - blueprint separat pentru notificări push pe telefon;
 - redenumire locală și notificare de test;
 - control pentru LED, identificare, restart, praguri și calibrare;
+- mod opțional „Router protejat prin UPS”, oprit implicit, care raportează
+  imediat dispariția plăcii ca pană și corectează verdictul la reconectare dacă
+  dovezile arată o problemă de rețea;
 - diagnostic cu IP, firmware, semnal Wi-Fi, uptime, memorie, număr de porniri
   și stare AquaNode Cloud.
 
@@ -49,7 +52,9 @@ Salvarea este administrată direct de integrare, independent de Recorder, astfel
 
 ## Cerințe
 
-- AquaNode Pulse cu firmware `1.3.0` sau mai nou;
+- AquaNode Pulse cu firmware `1.3.0` sau mai nou; firmware `1.3.1` este
+  recomandat pentru filtrarea exactă a pauzelor locale fără a ascunde o
+  deconectare Wi-Fi reală;
 - Home Assistant `2025.1` sau mai nou;
 - HACS instalat;
 - Home Assistant și Pulse în aceeași rețea locală.

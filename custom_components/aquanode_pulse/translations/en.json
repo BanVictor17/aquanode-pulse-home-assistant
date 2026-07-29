@@ -158,6 +158,9 @@
       },
       "idle_led": {
         "name": "Status LED"
+      },
+      "router_on_ups": {
+        "name": "Router protected by UPS"
       }
     },
     "button": {

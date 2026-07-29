@@ -41,6 +41,8 @@ const COPY = {
     renameHint: "Numele este salvat local în Home Assistant.",
     notifications: "Notificări Home Assistant",
     notificationsHint: "Apar automat în centrul de notificări Home Assistant.",
+    routerOnUps: "Router protejat prin UPS",
+    routerOnUpsHint: "Activează doar dacă routerul, Home Assistant și rețeaua locală rămân alimentate. Lipsa Pulse este raportată imediat ca pană și verificată la revenire.",
     notificationDelay: "Timp minim pentru notificări",
     notificationDelayHint: "Incidentele mai scurte rămân în jurnal, fără notificare.",
     phoneNotifications: "Notificări pe telefon",
@@ -180,6 +182,8 @@ const COPY = {
     renameHint: "The name is stored locally in Home Assistant.",
     notifications: "Home Assistant notifications",
     notificationsHint: "They appear automatically in the Home Assistant notification center.",
+    routerOnUps: "Router protected by UPS",
+    routerOnUpsHint: "Enable only when the router, Home Assistant and local network stay powered. A missing Pulse is reported immediately as a power outage and checked on reconnect.",
     notificationDelay: "Minimum notification time",
     notificationDelayHint: "Shorter incidents remain in the journal without a notification.",
     phoneNotifications: "Phone notifications",
@@ -574,6 +578,7 @@ class AquaNodePulsePanel extends HTMLElement {
       calibration: this.isOn(device, "calibration_required"),
       led: this.isOn(device, "idle_led"),
       notifications: this.isOn(device, "automatic_notifications"),
+      routerOnUps: this.isOn(device, "router_on_ups"),
       diagnostics: this.isOn(device, "diagnostic_logging"),
       event: this.metric(device, "last_interruption_ended")?.last_updated || "",
     })));
@@ -919,6 +924,14 @@ class AquaNodePulsePanel extends HTMLElement {
         title: this.t.notificationDelay,
         hint: this.t.notificationDelayHint,
         value: `${Math.round(notificationDelay)} sec`,
+      },
+      {
+        action: "toggle-router-on-ups",
+        icon: "wifi",
+        title: this.t.routerOnUps,
+        hint: this.t.routerOnUpsHint,
+        value: this.isOn(device, "router_on_ups") ? this.t.on : this.t.off,
+        toggle: this.isOn(device, "router_on_ups"),
       },
       {
         action: "phone-help",
@@ -1393,6 +1406,9 @@ class AquaNodePulsePanel extends HTMLElement {
       } else if (action === "toggle-notifications") {
         const entity = this.metric(device, "automatic_notifications");
         await this.callEntityService(entity, "switch", this.isOn(device, "automatic_notifications") ? "turn_off" : "turn_on");
+      } else if (action === "toggle-router-on-ups") {
+        const entity = this.metric(device, "router_on_ups");
+        await this.callEntityService(entity, "switch", this.isOn(device, "router_on_ups") ? "turn_off" : "turn_on");
       } else if (action === "toggle-diagnostic-logging") {
         const entity = this.metric(device, "diagnostic_logging");
         await this.callEntityService(entity, "switch", this.isOn(device, "diagnostic_logging") ? "turn_off" : "turn_on");

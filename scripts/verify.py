@@ -177,6 +177,7 @@ def check_imports() -> str:
     from custom_components.aquanode_pulse.interruptions import (
         NETWORK,
         POWER,
+        TRANSIENT,
         UNKNOWN,
         InterruptionTracker,
         classify,
@@ -205,20 +206,57 @@ def check_imports() -> str:
         fail(f"the tracker misread a power cut: {event}")
 
     short = InterruptionTracker()
-    short.poll_succeeded(0.0, {"boot_count": 7, "uptime_s": 900})
+    short.poll_succeeded(
+        0.0,
+        {
+            "boot_count": 7,
+            "uptime_s": 900,
+            "wifi": {"disconnect_count": 0},
+        },
+    )
     short.poll_failed(10.0, 1_000.0)
     short_event = short.poll_succeeded(
         12.0,
-        {"boot_count": 7, "uptime_s": 912},
+        {
+            "boot_count": 7,
+            "uptime_s": 912,
+            "wifi": {"disconnect_count": 0},
+        },
         1_002.0,
     )
     if (
         short_event is None
-        or short_event.cause != NETWORK
+        or short_event.cause != TRANSIENT
         or short_event.duration_seconds != 2.0
         or short_event.started_at != 1_000.0
     ):
-        fail(f"a two second interruption was not retained: {short_event}")
+        fail(f"a two second local poll gap was not filtered: {short_event}")
+
+    wifi = InterruptionTracker()
+    wifi.poll_succeeded(
+        0.0,
+        {
+            "boot_count": 7,
+            "uptime_s": 900,
+            "wifi": {"disconnect_count": 4},
+        },
+    )
+    wifi.poll_failed(10.0, 1_000.0)
+    wifi_event = wifi.poll_succeeded(
+        12.0,
+        {
+            "boot_count": 7,
+            "uptime_s": 912,
+            "wifi": {"disconnect_count": 5},
+        },
+        1_002.0,
+    )
+    if (
+        wifi_event is None
+        or wifi_event.cause != NETWORK
+        or wifi_event.evidence != "wifi_disconnect_count"
+    ):
+        fail(f"a real short Wi-Fi reconnect was filtered: {wifi_event}")
 
     restored = InterruptionTracker()
     restored.restore_boot_count(41)
@@ -422,6 +460,7 @@ for contract in (
     "phone-help",
     "rename-device",
     "test-notification",
+    "toggle-router-on-ups",
 ):
     if contract not in frontend:
         fail(f"frontend contract missing: {contract}")

@@ -24,19 +24,28 @@ from .const import (
     CONF_DIAGNOSTIC_LOGGING,
     CONF_DISPLAY_NAME,
     CONF_NOTIFICATION_DELAY,
+    CONF_ROUTER_ON_UPS,
     CONF_VOLTAGE_MINIMUM,
     DEFAULT_AUTOMATIC_NOTIFICATIONS,
     DEFAULT_DIAGNOSTIC_LOGGING,
     DEFAULT_NOTIFICATION_DELAY,
+    DEFAULT_ROUTER_ON_UPS,
     DEFAULT_VOLTAGE_MINIMUM,
     EVENT_CONNECTION_LOST,
     EVENT_INTERRUPTION,
     EVENT_VOLTAGE_LOW,
     EVENT_VOLTAGE_RECOVERED,
+    POLL_FAILURES_TO_CONFIRM,
     UPDATE_INTERVAL,
 )
 from .history import PulseHistory
-from .interruptions import MAINTENANCE, NETWORK, POWER, InterruptionTracker
+from .interruptions import (
+    MAINTENANCE,
+    NETWORK,
+    POWER,
+    TRANSIENT,
+    InterruptionTracker,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,6 +86,9 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_response_ms: float | None = None
         self.interruptions.restore_boot_count(
             history.last_boot_count(self.serial),
+        )
+        self.interruptions.restore_wifi_disconnect_count(
+            history.last_wifi_disconnect_count(self.serial),
         )
         if pending := history.pending_connection(self.serial):
             self._connection_loss_confirmed = True
@@ -141,6 +153,16 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     @property
+    def router_on_ups_enabled(self) -> bool:
+        """Return whether disappearance should be reported as a power cut."""
+        return bool(
+            self.config_entry.options.get(
+                CONF_ROUTER_ON_UPS,
+                DEFAULT_ROUTER_ON_UPS,
+            ),
+        )
+
+    @property
     def poll_diagnostics(self) -> dict[str, Any]:
         """Return non-sensitive counters explaining local API health."""
         return {
@@ -152,6 +174,7 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "last_poll_issue_at": self._last_poll_issue_at,
             "last_response_ms": self._last_response_ms,
             "connection_loss_confirmed": self._connection_loss_confirmed,
+            "router_on_ups": self.router_on_ups_enabled,
         }
 
     def _notifications_enabled(self) -> bool:
@@ -232,44 +255,38 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except AquaNodePulseInvalidAuth as err:
             raise ConfigEntryAuthFailed from err
         except AquaNodePulseResponseTimeout as err:
-            self._record_poll_issue(
+            filtered = await self._async_filter_or_confirm_poll_issue(
                 "response_timeout",
                 request_started,
-            )
-            if self.data is None:
-                raise UpdateFailed(
-                    "AquaNode Pulse nu a răspuns complet la prima citire",
-                ) from err
-            self.interruptions.poll_failed(
-                request_started,
                 request_started_wall,
+                strong_unreachable=False,
             )
-            if self._connection_loss_confirmed:
-                await self._async_handle_poll_failed(
-                    request_started,
-                    request_started_wall,
-                )
-                raise UpdateFailed(
-                    "AquaNode Pulse nu răspunde în rețeaua locală",
-                ) from err
-            return self._with_poll_diagnostics(self.data)
+            if filtered:
+                return self._with_poll_diagnostics(self.data)
+            raise UpdateFailed(
+                "AquaNode Pulse nu răspunde în rețeaua locală",
+            ) from err
         except AquaNodePulseCannotConnect as err:
-            self._record_poll_issue(
+            filtered = await self._async_filter_or_confirm_poll_issue(
                 "connection_failed",
                 request_started,
-            )
-            await self._async_handle_poll_failed(
-                request_started,
                 request_started_wall,
+                strong_unreachable=True,
             )
+            if filtered:
+                return self._with_poll_diagnostics(self.data)
             raise UpdateFailed(
                 "AquaNode Pulse nu răspunde în rețeaua locală",
             ) from err
         except AquaNodePulseApiError as err:
-            self._record_poll_issue(
+            filtered = await self._async_filter_or_confirm_poll_issue(
                 "invalid_response",
                 request_started,
+                request_started_wall,
+                strong_unreachable=False,
             )
+            if filtered:
+                return self._with_poll_diagnostics(self.data)
             raise UpdateFailed(str(err)) from err
 
         now_monotonic = self.hass.loop.time()
@@ -286,7 +303,12 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             now_wall,
         )
         if interruption is not None:
-            if confirmed_connection_loss or interruption.cause == POWER:
+            if interruption.cause == TRANSIENT:
+                await self._async_handle_transient_recovery(
+                    interruption,
+                    confirmed_connection_loss,
+                )
+            elif confirmed_connection_loss or interruption.cause in {POWER, NETWORK}:
                 await self._async_handle_recovery(
                     data,
                     interruption,
@@ -297,7 +319,7 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if self.diagnostic_logging_enabled:
                     _LOGGER.warning(
                         "%s: ignored a %.1fs local API response gap "
-                        "(%d failed poll(s)); boot count did not change",
+                        "(%d failed poll(s)); no reboot or Wi-Fi reconnect",
                         self.serial,
                         interruption.duration_seconds,
                         candidate_poll_issues,
@@ -307,8 +329,43 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._consecutive_poll_issues = 0
         self._candidate_poll_issues = 0
         self.history.record_boot_count(self.serial, data.get("boot_count"))
+        self.history.record_wifi_disconnect_count(
+            self.serial,
+            data.get("wifi", {}).get("disconnect_count"),
+        )
         await self._async_process_voltage(data, now_wall)
         return self._with_poll_diagnostics(data)
+
+    async def _async_filter_or_confirm_poll_issue(
+        self,
+        kind: str,
+        request_started: float,
+        request_started_wall: float,
+        *,
+        strong_unreachable: bool,
+    ) -> bool:
+        """Return True while a local polling issue is still only a candidate."""
+        self._record_poll_issue(kind, request_started)
+        if self.data is None:
+            return False
+
+        self.interruptions.poll_failed(
+            request_started,
+            request_started_wall,
+        )
+        should_confirm = (
+            self._connection_loss_confirmed
+            or self._consecutive_poll_issues >= POLL_FAILURES_TO_CONFIRM
+            or (strong_unreachable and self.router_on_ups_enabled)
+        )
+        if not should_confirm:
+            return True
+
+        await self._async_handle_poll_failed(
+            request_started,
+            request_started_wall,
+        )
+        return False
 
     def _record_poll_issue(
         self,
@@ -373,6 +430,7 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "started_at": started_at,
                     "entry_id": self.config_entry.entry_id,
                     "maintenance": maintenance,
+                    "router_on_ups": self.router_on_ups_enabled,
                 },
             )
             self._connection_loss_confirmed = True
@@ -388,19 +446,87 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         name = self._name()
         if self._is_romanian():
-            title = "Posibilă pană de curent"
-            message = (
-                f"{name} nu mai răspunde. Poate fi o pană de curent sau o "
-                "problemă de rețea. Cauza va fi confirmată la reconectare."
-            )
+            if self.router_on_ups_enabled:
+                title = "Pană de curent detectată"
+                message = (
+                    f"{name} nu mai răspunde. Modul Router protejat prin UPS "
+                    "este activ, deci evenimentul este raportat imediat ca pană. "
+                    "Cauza va fi verificată la reconectare."
+                )
+            else:
+                title = "Posibilă pană de curent"
+                message = (
+                    f"{name} nu mai răspunde. Poate fi o pană de curent sau o "
+                    "problemă de rețea. Cauza va fi confirmată la reconectare."
+                )
         else:
-            title = "Possible power outage"
-            message = (
-                f"{name} stopped responding. This may be a power outage or a "
-                "network problem. The cause will be confirmed on reconnect."
-            )
+            if self.router_on_ups_enabled:
+                title = "Power outage detected"
+                message = (
+                    f"{name} stopped responding. Router protected by UPS mode "
+                    "is enabled, so this is reported immediately as a power "
+                    "outage. The cause will be checked on reconnect."
+                )
+            else:
+                title = "Possible power outage"
+                message = (
+                    f"{name} stopped responding. This may be a power outage or a "
+                    "network problem. The cause will be confirmed on reconnect."
+                )
         self._notify("connection", title, message)
         self._connection_notification_open = True
+
+    async def _async_handle_transient_recovery(
+        self,
+        interruption,
+        was_confirmed: bool,
+    ) -> None:
+        """Erase a local HTTP gap that had no reboot or Wi-Fi transition."""
+        self._filtered_poll_gaps += 1
+        await self.history.async_cancel_connection_loss(self.serial)
+        if self.diagnostic_logging_enabled:
+            _LOGGER.warning(
+                "%s: filtered %.1fs local poll gap; boot and Wi-Fi counters "
+                "did not change",
+                self.serial,
+                interruption.duration_seconds,
+            )
+
+        if was_confirmed:
+            self.hass.bus.async_fire(
+                EVENT_INTERRUPTION,
+                {
+                    "device_id": self.serial,
+                    "name": self._name(),
+                    "cause": TRANSIENT,
+                    "started_at": interruption.started_at,
+                    "ended_at": interruption.ended_at,
+                    "duration_seconds": interruption.duration_seconds,
+                    "entry_id": self.config_entry.entry_id,
+                    "router_on_ups": self.router_on_ups_enabled,
+                    "recorded": False,
+                },
+            )
+
+        if self._connection_notification_open:
+            name = self._name()
+            if self._is_romanian():
+                self._notify(
+                    "connection",
+                    "Alertă corectată",
+                    f"{name} a rămas alimentat și Wi-Fi-ul nu s-a deconectat. "
+                    "A fost doar o pauză a citirii locale.",
+                )
+            else:
+                self._notify(
+                    "connection",
+                    "Alert corrected",
+                    f"{name} stayed powered and Wi-Fi did not disconnect. "
+                    "Only the local status read was briefly interrupted.",
+                )
+        else:
+            self._dismiss("connection")
+        self._connection_notification_open = False
 
     async def _async_handle_recovery(
         self,
@@ -426,6 +552,7 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             started_at=interruption.started_at,
             ended_at=interruption.ended_at,
             duration_seconds=interruption.duration_seconds,
+            evidence=interruption.evidence,
         )
         self.interruptions.last.cause = cause
 
@@ -445,6 +572,8 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "ended_at": event["ended_at"],
                 "duration_seconds": event["duration_seconds"],
                 "entry_id": self.config_entry.entry_id,
+                "router_on_ups": self.router_on_ups_enabled,
+                "recorded": True,
             },
         )
 
@@ -472,7 +601,11 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 title = "Curentul a revenit"
                 message = f"{name} confirmă o pană de curent de {duration}."
             elif cause == NETWORK:
-                title = "Conexiunea a revenit"
+                title = (
+                    "Corecție: a fost rețeaua"
+                    if self.router_on_ups_enabled
+                    else "Conexiunea a revenit"
+                )
                 message = (
                     f"{name} a rămas alimentat. A fost o problemă de rețea "
                     f"de {duration}."
@@ -488,7 +621,11 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 title = "Power is back"
                 message = f"{name} confirms a power outage lasting {duration}."
             elif cause == NETWORK:
-                title = "Connection restored"
+                title = (
+                    "Correction: it was the network"
+                    if self.router_on_ups_enabled
+                    else "Connection restored"
+                )
                 message = (
                     f"{name} stayed powered. This was a network problem "
                     f"lasting {duration}."

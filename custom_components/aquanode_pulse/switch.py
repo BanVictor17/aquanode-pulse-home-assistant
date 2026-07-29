@@ -11,8 +11,10 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import (
     CONF_AUTOMATIC_NOTIFICATIONS,
     CONF_DIAGNOSTIC_LOGGING,
+    CONF_ROUTER_ON_UPS,
     DEFAULT_AUTOMATIC_NOTIFICATIONS,
     DEFAULT_DIAGNOSTIC_LOGGING,
+    DEFAULT_ROUTER_ON_UPS,
 )
 from .coordinator import AquaNodePulseCoordinator
 from .entity import AquaNodePulseEntity
@@ -29,6 +31,7 @@ async def async_setup_entry(
         [
             AquaNodePulseIdleLedSwitch(coordinator),
             AquaNodePulseAutomaticNotificationsSwitch(coordinator, entry),
+            AquaNodePulseRouterUpsSwitch(coordinator, entry),
             AquaNodePulseDiagnosticLoggingSwitch(coordinator, entry),
         ],
     )
@@ -138,6 +141,50 @@ class AquaNodePulseDiagnosticLoggingSwitch(
     def _set_enabled(self, enabled: bool) -> None:
         options = dict(self._entry.options)
         options[CONF_DIAGNOSTIC_LOGGING] = enabled
+        self.hass.config_entries.async_update_entry(
+            self._entry,
+            options=options,
+        )
+        self.async_write_ha_state()
+        self.coordinator.async_update_listeners()
+
+
+class AquaNodePulseRouterUpsSwitch(
+    AquaNodePulseEntity,
+    SwitchEntity,
+):
+    """Treat disappearance as a power cut when network equipment has backup."""
+
+    _attr_translation_key = "router_on_ups"
+    _attr_icon = "mdi:router-wireless"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: AquaNodePulseCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator, "router_on_ups")
+        self._entry = entry
+
+    @property
+    def is_on(self) -> bool:
+        return bool(
+            self._entry.options.get(
+                CONF_ROUTER_ON_UPS,
+                DEFAULT_ROUTER_ON_UPS,
+            ),
+        )
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._set_enabled(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._set_enabled(False)
+
+    def _set_enabled(self, enabled: bool) -> None:
+        options = dict(self._entry.options)
+        options[CONF_ROUTER_ON_UPS] = enabled
         self.hass.config_entries.async_update_entry(
             self._entry,
             options=options,

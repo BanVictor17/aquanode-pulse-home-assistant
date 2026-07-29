@@ -158,6 +158,9 @@
       },
       "idle_led": {
         "name": "LED de stare"
+      },
+      "router_on_ups": {
+        "name": "Router protejat prin UPS"
       }
     },
     "button": {
