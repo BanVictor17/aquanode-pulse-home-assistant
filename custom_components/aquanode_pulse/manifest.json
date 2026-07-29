@@ -17,7 +17,7 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/BanVictor17/aquanode-pulse-home-assistant/issues",
   "requirements": [],
-  "version": "0.5.2",
+  "version": "0.5.3",
   "zeroconf": [
     "_aquanode-pulse._tcp.local."
   ]

@@ -17,13 +17,16 @@ from .api import (
     AquaNodePulseApiError,
     AquaNodePulseCannotConnect,
     AquaNodePulseInvalidAuth,
+    AquaNodePulseResponseTimeout,
 )
 from .const import (
     CONF_AUTOMATIC_NOTIFICATIONS,
+    CONF_DIAGNOSTIC_LOGGING,
     CONF_DISPLAY_NAME,
     CONF_NOTIFICATION_DELAY,
     CONF_VOLTAGE_MINIMUM,
     DEFAULT_AUTOMATIC_NOTIFICATIONS,
+    DEFAULT_DIAGNOSTIC_LOGGING,
     DEFAULT_NOTIFICATION_DELAY,
     DEFAULT_VOLTAGE_MINIMUM,
     EVENT_CONNECTION_LOST,
@@ -63,11 +66,20 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.serial = str(entry.unique_id or "")
         self.interruptions = InterruptionTracker()
         self._connection_notification_open = False
+        self._connection_loss_confirmed = False
         self._maintenance_until = 0.0
+        self._poll_issue_count = 0
+        self._filtered_poll_gaps = 0
+        self._consecutive_poll_issues = 0
+        self._candidate_poll_issues = 0
+        self._last_poll_issue: str | None = None
+        self._last_poll_issue_at: float | None = None
+        self._last_response_ms: float | None = None
         self.interruptions.restore_boot_count(
             history.last_boot_count(self.serial),
         )
         if pending := history.pending_connection(self.serial):
+            self._connection_loss_confirmed = True
             now_monotonic = hass.loop.time()
             now_wall = time.time()
             self.interruptions.restore_offline(
@@ -117,6 +129,30 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def in_maintenance(self) -> bool:
         """Return whether a user-requested local restart is still expected."""
         return self.hass.loop.time() <= self._maintenance_until
+
+    @property
+    def diagnostic_logging_enabled(self) -> bool:
+        """Return whether detailed local polling messages are enabled."""
+        return bool(
+            self.config_entry.options.get(
+                CONF_DIAGNOSTIC_LOGGING,
+                DEFAULT_DIAGNOSTIC_LOGGING,
+            ),
+        )
+
+    @property
+    def poll_diagnostics(self) -> dict[str, Any]:
+        """Return non-sensitive counters explaining local API health."""
+        return {
+            "diagnostic_logging": self.diagnostic_logging_enabled,
+            "poll_issue_count": self._poll_issue_count,
+            "filtered_poll_gaps": self._filtered_poll_gaps,
+            "consecutive_poll_issues": self._consecutive_poll_issues,
+            "last_poll_issue": self._last_poll_issue,
+            "last_poll_issue_at": self._last_poll_issue_at,
+            "last_response_ms": self._last_response_ms,
+            "connection_loss_confirmed": self._connection_loss_confirmed,
+        }
 
     def _notifications_enabled(self) -> bool:
         return bool(
@@ -189,48 +225,136 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
-        now_monotonic = self.hass.loop.time()
-        now_wall = time.time()
+        request_started = self.hass.loop.time()
+        request_started_wall = time.time()
         try:
             data = await self.api.async_status()
         except AquaNodePulseInvalidAuth as err:
             raise ConfigEntryAuthFailed from err
+        except AquaNodePulseResponseTimeout as err:
+            self._record_poll_issue(
+                "response_timeout",
+                request_started,
+            )
+            if self.data is None:
+                raise UpdateFailed(
+                    "AquaNode Pulse nu a răspuns complet la prima citire",
+                ) from err
+            self.interruptions.poll_failed(
+                request_started,
+                request_started_wall,
+            )
+            if self._connection_loss_confirmed:
+                await self._async_handle_poll_failed(
+                    request_started,
+                    request_started_wall,
+                )
+                raise UpdateFailed(
+                    "AquaNode Pulse nu răspunde în rețeaua locală",
+                ) from err
+            return self._with_poll_diagnostics(self.data)
         except AquaNodePulseCannotConnect as err:
-            await self._async_handle_poll_failed(now_monotonic, now_wall)
+            self._record_poll_issue(
+                "connection_failed",
+                request_started,
+            )
+            await self._async_handle_poll_failed(
+                request_started,
+                request_started_wall,
+            )
             raise UpdateFailed(
                 "AquaNode Pulse nu răspunde în rețeaua locală",
             ) from err
         except AquaNodePulseApiError as err:
-            await self._async_handle_poll_failed(now_monotonic, now_wall)
+            self._record_poll_issue(
+                "invalid_response",
+                request_started,
+            )
             raise UpdateFailed(str(err)) from err
 
+        now_monotonic = self.hass.loop.time()
+        now_wall = time.time()
+        self._last_response_ms = round(
+            max(0.0, now_monotonic - request_started) * 1000,
+            1,
+        )
+        confirmed_connection_loss = self._connection_loss_confirmed
+        candidate_poll_issues = self._candidate_poll_issues
         interruption = self.interruptions.poll_succeeded(
             now_monotonic,
             data,
             now_wall,
         )
         if interruption is not None:
-            await self._async_handle_recovery(
-                data,
-                interruption,
-                now_monotonic,
-            )
+            if confirmed_connection_loss or interruption.cause == POWER:
+                await self._async_handle_recovery(
+                    data,
+                    interruption,
+                    now_monotonic,
+                )
+            else:
+                self._filtered_poll_gaps += 1
+                if self.diagnostic_logging_enabled:
+                    _LOGGER.warning(
+                        "%s: ignored a %.1fs local API response gap "
+                        "(%d failed poll(s)); boot count did not change",
+                        self.serial,
+                        interruption.duration_seconds,
+                        candidate_poll_issues,
+                    )
 
+        self._connection_loss_confirmed = False
+        self._consecutive_poll_issues = 0
+        self._candidate_poll_issues = 0
         self.history.record_boot_count(self.serial, data.get("boot_count"))
         await self._async_process_voltage(data, now_wall)
-        return data
+        return self._with_poll_diagnostics(data)
+
+    def _record_poll_issue(
+        self,
+        kind: str,
+        request_started: float,
+    ) -> None:
+        """Record one failed request without logging credentials or payloads."""
+        if self.interruptions.offline_since is None:
+            self._candidate_poll_issues = 0
+        elapsed_ms = max(0.0, self.hass.loop.time() - request_started) * 1000
+        self._poll_issue_count += 1
+        self._consecutive_poll_issues += 1
+        self._candidate_poll_issues += 1
+        self._last_poll_issue = kind
+        self._last_poll_issue_at = time.time()
+        if self.diagnostic_logging_enabled:
+            _LOGGER.warning(
+                "%s: local poll issue %s after %.1fms (consecutive=%d, total=%d)",
+                self.serial,
+                kind,
+                elapsed_ms,
+                self._consecutive_poll_issues,
+                self._poll_issue_count,
+            )
+
+    def _with_poll_diagnostics(
+        self,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Attach integration-only health data to a fresh coordinator payload."""
+        payload = dict(data)
+        payload["_local_poll"] = self.poll_diagnostics
+        return payload
 
     async def _async_handle_poll_failed(
         self,
         now_monotonic: float,
         now_wall: float,
     ) -> None:
-        first_failure = self.interruptions.poll_failed(
+        self.interruptions.poll_failed(
             now_monotonic,
             now_wall,
         )
         maintenance = now_monotonic <= self._maintenance_until
-        if first_failure:
+        if not self._connection_loss_confirmed:
+            started_at = self.interruptions.offline_since_wall or now_wall
             maintenance_until_wall = (
                 now_wall + max(0.0, self._maintenance_until - now_monotonic)
                 if maintenance
@@ -238,7 +362,7 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             await self.history.async_start_connection_loss(
                 self.serial,
-                started_at=now_wall,
+                started_at=started_at,
                 maintenance_until=maintenance_until_wall,
             )
             self.hass.bus.async_fire(
@@ -246,11 +370,12 @@ class AquaNodePulseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 {
                     "device_id": self.serial,
                     "name": self._name(),
-                    "started_at": now_wall,
+                    "started_at": started_at,
                     "entry_id": self.config_entry.entry_id,
                     "maintenance": maintenance,
                 },
             )
+            self._connection_loss_confirmed = True
 
         if (
             maintenance

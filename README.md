@@ -164,6 +164,18 @@ saturat** și **Calibrare necesară**.
 Este normal dacă internetul sau serverul AquaNode nu este disponibil.
 Integrarea Home Assistant continuă să citească local dispozitivul.
 
+**Apar pauze locale scurte fără o cădere reală**
+
+Integrarea separă un eșec real de conectare de un răspuns HTTP local întârziat.
+O pauză de răspuns este eliminată din jurnal dacă placa revine cu același număr
+de porniri. Dacă numărul de porniri s-a schimbat, pana de curent rămâne salvată,
+inclusiv atunci când a durat doar câteva secunde.
+
+În **Dispozitiv → Diagnostic citire locală** poți activa temporar mesaje concise
+în jurnalul Home Assistant. Secțiunea **Informații dispozitiv** arată și timpul
+ultimului răspuns, numărul pauzelor filtrate și ultima problemă de citire.
+Toggle-ul este oprit implicit.
+
 **Graficele sunt goale după instalare**
 
 Istoricul începe în momentul în care integrarea este instalată. Primul punct

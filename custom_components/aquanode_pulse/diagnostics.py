@@ -24,6 +24,7 @@ async def async_get_config_entry_diagnostics(
         "options": dict(entry.options),
         "device": coordinator.data,
         "last_update_success": coordinator.last_update_success,
+        "local_polling": coordinator.poll_diagnostics,
         "history": {
             "saved_event_count": history["saved_event_count"],
             "power_outage_count": history["power_outage_count"],

@@ -64,9 +64,20 @@
       add("number", "referinta_calibrare", "calibration_reference", "230", { unit_of_measurement: "V" });
       add("switch", "led", "idle_led", "on");
       add("switch", "notificari", "automatic_notifications", "on");
+      add("switch", "diagnostic", "diagnostic_logging", "off");
       add("text", "nume", "display_name", "Acasă");
       add("binary_sensor", "cloud", "cloud_connected", "on");
-      add("binary_sensor", "conexiune_locala", "local_connection", "on");
+      add("binary_sensor", "conexiune_locala", "local_connection", "on", {
+        maintenance: false,
+        diagnostic_logging: false,
+        poll_issue_count: 12,
+        filtered_poll_gaps: 12,
+        consecutive_poll_issues: 0,
+        last_poll_issue: "response_timeout",
+        last_poll_issue_at: (now - 1_800_000) / 1_000,
+        last_response_ms: 17.4,
+        connection_loss_confirmed: false,
+      });
       add("binary_sensor", "modul_tensiune", "voltage_sensor_problem", "off");
       add("binary_sensor", "semnal_saturat", "voltage_clipped", "off");
       add("binary_sensor", "calibrare", "calibration_required", "off");

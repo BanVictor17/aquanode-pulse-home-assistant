@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from typing import Any
 
-from aiohttp import ClientError, ClientResponse, ClientSession
+from aiohttp import (
+    ClientConnectionError,
+    ClientError,
+    ClientResponse,
+    ClientSession,
+    ClientTimeout,
+    ConnectionTimeoutError,
+    SocketTimeoutError,
+)
 
-from .const import REQUEST_TIMEOUT_SECONDS
+from .const import (
+    REQUEST_CONNECT_TIMEOUT_SECONDS,
+    REQUEST_RESPONSE_TIMEOUT_SECONDS,
+)
 
 
 class AquaNodePulseApiError(Exception):
@@ -16,7 +26,11 @@ class AquaNodePulseApiError(Exception):
 
 
 class AquaNodePulseCannotConnect(AquaNodePulseApiError):
-    """The device did not answer."""
+    """A connection to the device could not be established or was lost."""
+
+
+class AquaNodePulseResponseTimeout(AquaNodePulseApiError):
+    """The device stayed reachable but its local HTTP response stalled."""
 
 
 class AquaNodePulseInvalidAuth(AquaNodePulseApiError):
@@ -99,20 +113,36 @@ class AquaNodePulseApi:
             {"Authorization": f"Bearer {self._password}"} if authenticated else None
         )
         try:
-            # This is a LAN-only request to an ESP32. A long HTTP timeout would
-            # make a real outage look several seconds late, so fail quickly and
-            # let the one-second coordinator retry on the next tick.
-            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-                response = await self._session.request(
-                    method,
-                    f"{self.base_url}{path}",
-                    headers=headers,
-                    json=json,
-                )
+            # Keep connection and response timeouts separate. A failed TCP
+            # connection is evidence that the board is unreachable; a socket
+            # read timeout can also happen while its cooperative HTTP server is
+            # briefly busy even though Wi-Fi and MQTT remain connected.
+            timeout = ClientTimeout(
+                total=None,
+                sock_connect=REQUEST_CONNECT_TIMEOUT_SECONDS,
+                sock_read=REQUEST_RESPONSE_TIMEOUT_SECONDS,
+            )
+            async with self._session.request(
+                method,
+                f"{self.base_url}{path}",
+                headers=headers,
+                json=json,
+                timeout=timeout,
+            ) as response:
                 return await self._async_decode(response)
         except AquaNodePulseApiError:
             raise
-        except (TimeoutError, ClientError, OSError) as err:
+        except ConnectionTimeoutError as err:
+            raise AquaNodePulseCannotConnect("connection_timeout") from err
+        except SocketTimeoutError as err:
+            raise AquaNodePulseResponseTimeout("response_timeout") from err
+        except ClientConnectionError as err:
+            raise AquaNodePulseCannotConnect(type(err).__name__) from err
+        except TimeoutError as err:
+            # Defensive fallback for older aiohttp builds which did not expose
+            # the more specific socket timeout subclass.
+            raise AquaNodePulseResponseTimeout("response_timeout") from err
+        except (ClientError, OSError) as err:
             raise AquaNodePulseCannotConnect from err
 
     async def _async_decode(self, response: ClientResponse) -> dict[str, Any]:
@@ -121,6 +151,8 @@ class AquaNodePulseApi:
             raise AquaNodePulseInvalidAuth
         try:
             payload = await response.json(content_type=None)
+        except ClientConnectionError:
+            raise
         except (ValueError, ClientError) as err:
             raise AquaNodePulseInvalidResponse from err
         if response.status >= 400:

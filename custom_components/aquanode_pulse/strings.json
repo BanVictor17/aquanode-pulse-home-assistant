@@ -153,6 +153,9 @@
       "automatic_notifications": {
         "name": "Home Assistant notifications"
       },
+      "diagnostic_logging": {
+        "name": "Local polling diagnostics"
+      },
       "idle_led": {
         "name": "Status LED"
       }

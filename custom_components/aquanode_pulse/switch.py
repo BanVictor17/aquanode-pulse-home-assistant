@@ -8,7 +8,12 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_AUTOMATIC_NOTIFICATIONS, DEFAULT_AUTOMATIC_NOTIFICATIONS
+from .const import (
+    CONF_AUTOMATIC_NOTIFICATIONS,
+    CONF_DIAGNOSTIC_LOGGING,
+    DEFAULT_AUTOMATIC_NOTIFICATIONS,
+    DEFAULT_DIAGNOSTIC_LOGGING,
+)
 from .coordinator import AquaNodePulseCoordinator
 from .entity import AquaNodePulseEntity
 
@@ -24,6 +29,7 @@ async def async_setup_entry(
         [
             AquaNodePulseIdleLedSwitch(coordinator),
             AquaNodePulseAutomaticNotificationsSwitch(coordinator, entry),
+            AquaNodePulseDiagnosticLoggingSwitch(coordinator, entry),
         ],
     )
 
@@ -94,3 +100,47 @@ class AquaNodePulseAutomaticNotificationsSwitch(
             options=options,
         )
         self.async_write_ha_state()
+
+
+class AquaNodePulseDiagnosticLoggingSwitch(
+    AquaNodePulseEntity,
+    SwitchEntity,
+):
+    """Enable concise polling diagnostics in the Home Assistant log."""
+
+    _attr_translation_key = "diagnostic_logging"
+    _attr_icon = "mdi:bug-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: AquaNodePulseCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator, "diagnostic_logging")
+        self._entry = entry
+
+    @property
+    def is_on(self) -> bool:
+        return bool(
+            self._entry.options.get(
+                CONF_DIAGNOSTIC_LOGGING,
+                DEFAULT_DIAGNOSTIC_LOGGING,
+            ),
+        )
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._set_enabled(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._set_enabled(False)
+
+    def _set_enabled(self, enabled: bool) -> None:
+        options = dict(self._entry.options)
+        options[CONF_DIAGNOSTIC_LOGGING] = enabled
+        self.hass.config_entries.async_update_entry(
+            self._entry,
+            options=options,
+        )
+        self.async_write_ha_state()
+        self.coordinator.async_update_listeners()

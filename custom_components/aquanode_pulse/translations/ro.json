@@ -153,6 +153,9 @@
       "automatic_notifications": {
         "name": "Notificări Home Assistant"
       },
+      "diagnostic_logging": {
+        "name": "Diagnostic citire locală"
+      },
       "idle_led": {
         "name": "LED de stare"
       }

@@ -5,13 +5,18 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from aiohttp import ConnectionTimeoutError, SocketTimeoutError
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.aquanode_pulse.api import AquaNodePulseCannotConnect
+from custom_components.aquanode_pulse.api import (
+    AquaNodePulseApi,
+    AquaNodePulseCannotConnect,
+    AquaNodePulseResponseTimeout,
+)
 from custom_components.aquanode_pulse.const import (
     CONF_PASSWORD,
     CONF_PORT,
@@ -92,6 +97,7 @@ async def test_setup_short_outage_and_power_recovery(
         assert {
             "automatic_notifications",
             "calibration_reference",
+            "diagnostic_logging",
             "display_name",
             "last_interruption_started",
             "last_voltage",
@@ -191,3 +197,154 @@ async def test_setup_short_outage_and_power_recovery(
         assert saved["voltage"][-1]["minimum"] == 190.0
 
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_response_stall_is_filtered_but_a_reboot_is_kept(
+    hass: HomeAssistant,
+    mock_async_zeroconf,
+) -> None:
+    """Ignore a busy HTTP loop, while retaining short power-cut evidence."""
+    assert mock_async_zeroconf is not None
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: "192.0.2.42",
+            CONF_PORT: 6053,
+            CONF_PASSWORD: "test-password",
+        },
+        title="Acasă",
+        unique_id="AP-429385",
+    )
+    entry.add_to_hass(hass)
+
+    status = AsyncMock(return_value=STATUS)
+    with patch(
+        "custom_components.aquanode_pulse.api.AquaNodePulseApi.async_status",
+        status,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data.coordinator
+
+        diagnostic_switch = _metrics(hass)["diagnostic_logging"]
+        assert diagnostic_switch.state == STATE_OFF
+        await hass.services.async_call(
+            "switch",
+            "turn_on",
+            {"entity_id": diagnostic_switch.entity_id},
+            blocking=True,
+        )
+        assert coordinator.diagnostic_logging_enabled
+        assert _metrics(hass)["diagnostic_logging"].state == STATE_ON
+
+        status.side_effect = AquaNodePulseResponseTimeout()
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+        local_connection = _metrics(hass)["local_connection"]
+        assert local_connection.state == STATE_ON
+        assert local_connection.attributes["poll_issue_count"] == 1
+        assert local_connection.attributes["filtered_poll_gaps"] == 0
+        assert entry.runtime_data.history.pending_connection("AP-429385") is None
+        assert entry.runtime_data.history.last_interruption("AP-429385") is None
+
+        status.side_effect = None
+        status.return_value = STATUS
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+        local_connection = _metrics(hass)["local_connection"]
+        assert local_connection.state == STATE_ON
+        assert local_connection.attributes["filtered_poll_gaps"] == 1
+        assert local_connection.attributes["consecutive_poll_issues"] == 0
+        assert entry.runtime_data.history.last_interruption("AP-429385") is None
+
+        status.side_effect = AquaNodePulseResponseTimeout()
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        status.side_effect = None
+        status.return_value = {
+            **STATUS,
+            "uptime_s": 2,
+            "boot_count": 9,
+        }
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+        interruption = entry.runtime_data.history.last_interruption("AP-429385")
+        assert interruption is not None
+        assert interruption["kind"] == "power"
+        assert _metrics(hass)["local_connection"].state == STATE_ON
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+class _FailingRequest:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    async def __aenter__(self):
+        raise self._error
+
+    async def __aexit__(self, *args) -> None:
+        return None
+
+
+class _FailingSession:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def request(self, *args, **kwargs):
+        return _FailingRequest(self._error)
+
+
+class _BodyTimeoutResponse:
+    status = 200
+
+    async def json(self, **kwargs):
+        raise SocketTimeoutError
+
+
+class _ReturningRequest:
+    async def __aenter__(self):
+        return _BodyTimeoutResponse()
+
+    async def __aexit__(self, *args) -> None:
+        return None
+
+
+class _BodyTimeoutSession:
+    def request(self, *args, **kwargs):
+        return _ReturningRequest()
+
+
+@pytest.mark.asyncio
+async def test_api_distinguishes_response_and_connection_timeouts() -> None:
+    """Preserve the signal the coordinator needs for correct classification."""
+    response_api = AquaNodePulseApi(
+        _FailingSession(SocketTimeoutError()),
+        "192.0.2.42",
+        6053,
+        "test-password",
+    )
+    with pytest.raises(AquaNodePulseResponseTimeout):
+        await response_api.async_status()
+
+    body_timeout_api = AquaNodePulseApi(
+        _BodyTimeoutSession(),
+        "192.0.2.42",
+        6053,
+        "test-password",
+    )
+    with pytest.raises(AquaNodePulseResponseTimeout):
+        await body_timeout_api.async_status()
+
+    connection_api = AquaNodePulseApi(
+        _FailingSession(ConnectionTimeoutError()),
+        "192.0.2.42",
+        6053,
+        "test-password",
+    )
+    with pytest.raises(AquaNodePulseCannotConnect):
+        await connection_api.async_status()

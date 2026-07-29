@@ -111,10 +111,11 @@ class AquaNodePulseLocalConnection(AquaNodePulseEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose planned maintenance to phone-notification automations."""
+        """Expose planned maintenance and non-sensitive polling diagnostics."""
         return {
             **super().extra_state_attributes,
             "maintenance": self.coordinator.in_maintenance,
+            **self.coordinator.poll_diagnostics,
         }
 
 

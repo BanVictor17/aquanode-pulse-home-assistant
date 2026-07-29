@@ -58,9 +58,15 @@ const COPY = {
     identifyHint: "LED-ul va clipi pentru a-l putea găsi.",
     restart: "Repornește dispozitivul",
     diagnostics: "Diagnostic",
+    diagnosticLogging: "Diagnostic citire locală",
+    diagnosticLoggingHint: "Activează temporar detalii despre timeouturi în jurnalul Home Assistant.",
     deviceInformation: "Informații dispozitiv",
     wifiSignal: "Semnal Wi-Fi",
     lastSignal: "Ultimul semnal primit",
+    lastLocalResponse: "Ultimul răspuns local",
+    filteredPollGaps: "Pauze locale filtrate",
+    lastPollIssue: "Ultima eroare",
+    noPollIssues: "Nicio problemă detectată",
     uptime: "Timp de funcționare",
     lastConnection: "Ultima reconectare",
     reconnectDuration: "Durata ultimei întreruperi",
@@ -191,9 +197,15 @@ const COPY = {
     identifyHint: "The LED will blink so you can find it.",
     restart: "Restart device",
     diagnostics: "Diagnostics",
+    diagnosticLogging: "Local polling diagnostics",
+    diagnosticLoggingHint: "Temporarily add timeout details to the Home Assistant log.",
     deviceInformation: "Device information",
     wifiSignal: "Wi-Fi signal",
     lastSignal: "Last signal received",
+    lastLocalResponse: "Last local response",
+    filteredPollGaps: "Filtered local gaps",
+    lastPollIssue: "Last issue",
+    noPollIssues: "No issue detected",
     uptime: "Uptime",
     lastConnection: "Last reconnection",
     reconnectDuration: "Last interruption duration",
@@ -393,6 +405,21 @@ function causeLabel(kind, t) {
   }[kind] || t.unknown;
 }
 
+function pollIssueLabel(kind, language) {
+  const labels = language === "ro"
+    ? {
+        response_timeout: "Răspuns întârziat",
+        connection_failed: "Conexiune eșuată",
+        invalid_response: "Răspuns invalid",
+      }
+    : {
+        response_timeout: "Delayed response",
+        connection_failed: "Connection failed",
+        invalid_response: "Invalid response",
+      };
+  return labels[kind] || "";
+}
+
 class AquaNodePulsePanel extends HTMLElement {
   constructor() {
     super();
@@ -547,6 +574,7 @@ class AquaNodePulsePanel extends HTMLElement {
       calibration: this.isOn(device, "calibration_required"),
       led: this.isOn(device, "idle_led"),
       notifications: this.isOn(device, "automatic_notifications"),
+      diagnostics: this.isOn(device, "diagnostic_logging"),
       event: this.metric(device, "last_interruption_ended")?.last_updated || "",
     })));
   }
@@ -860,6 +888,15 @@ class AquaNodePulsePanel extends HTMLElement {
         : calibrated
           ? this.t.calibrated
           : this.t.calibrationRequired;
+    const localConnection = this.metric(device, "local_connection");
+    const localDiagnostics = localConnection?.attributes || {};
+    const lastPollIssue = pollIssueLabel(
+      localDiagnostics.last_poll_issue,
+      this.language,
+    );
+    const lastPollIssueText = lastPollIssue
+      ? `${lastPollIssue} · ${moment(localDiagnostics.last_poll_issue_at, this.language, true)}`
+      : this.t.noPollIssues;
     const rows = [
       {
         action: "rename-device",
@@ -920,6 +957,14 @@ class AquaNodePulsePanel extends HTMLElement {
         toggle: this.isOn(device, "idle_led"),
       },
       {
+        action: "toggle-diagnostic-logging",
+        icon: "info",
+        title: this.t.diagnosticLogging,
+        hint: this.t.diagnosticLoggingHint,
+        value: this.isOn(device, "diagnostic_logging") ? this.t.on : this.t.off,
+        toggle: this.isOn(device, "diagnostic_logging"),
+      },
+      {
         action: "access-help",
         icon: "users",
         title: this.t.access,
@@ -948,7 +993,10 @@ class AquaNodePulsePanel extends HTMLElement {
         <div class="diagnostic-list">
           ${this.infoRow(this.t.wifiSignal, wifiQuality(this.value(device, "wifi_signal"), this.language), "wifi")}
           ${this.infoRow(this.t.lastSignal, this.isOnline(device) ? this.t.measuredNow : sinceIso(this.metric(device, "uptime")?.last_updated, this.language), "clock")}
-          ${this.infoRow(this.t.uptime, duration(this.value(device, "uptime"), this.language), "clock")}
+          ${this.infoRow(this.t.lastLocalResponse, Number.isFinite(Number(localDiagnostics.last_response_ms)) ? `${Number(localDiagnostics.last_response_ms).toFixed(1)} ms` : this.t.unavailable, "clock")}
+          ${this.infoRow(this.t.filteredPollGaps, String(localDiagnostics.filtered_poll_gaps ?? 0), "info")}
+          ${this.infoRow(this.t.lastPollIssue, lastPollIssueText, "info")}
+          ${this.infoRow(this.t.uptime, duration(durationSeconds(this.metric(device, "uptime")), this.language), "clock")}
           ${this.infoRow(this.t.lastConnection, this.historyLastEnded(device), "history")}
           ${this.infoRow(this.t.reconnectDuration, duration(this.value(device, "last_interruption_duration"), this.language), "clock")}
           ${this.infoRow(this.t.firmware, device.firmware || this.t.unavailable, "device")}
@@ -1345,6 +1393,9 @@ class AquaNodePulsePanel extends HTMLElement {
       } else if (action === "toggle-notifications") {
         const entity = this.metric(device, "automatic_notifications");
         await this.callEntityService(entity, "switch", this.isOn(device, "automatic_notifications") ? "turn_off" : "turn_on");
+      } else if (action === "toggle-diagnostic-logging") {
+        const entity = this.metric(device, "diagnostic_logging");
+        await this.callEntityService(entity, "switch", this.isOn(device, "diagnostic_logging") ? "turn_off" : "turn_on");
       } else if (action === "identify") {
         await this.callEntityService(this.metric(device, "identify"), "button", "press");
       } else if (action === "restart") {
